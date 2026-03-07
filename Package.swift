@@ -2,13 +2,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "AntigravityStats",
+    name: "myAgentSkills",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "AntigravityStats",
-            path: "Sources/AntigravityStats",
+            name: "myAgentSkills",
+            path: "Sources/myAgentSkills",
             exclude: ["Resources"]
+        ),
+        .testTarget(
+            name: "myAgentSkillsTests",
+            dependencies: ["myAgentSkills"],
+            path: "Tests/myAgentSkillsTests"
         )
     ]
 )
