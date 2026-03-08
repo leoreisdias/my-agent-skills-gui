@@ -72,15 +72,60 @@ struct CLICommandResult: Equatable {
     var combinedOutput: String {
         let cleanedStdout = stdout.strippingANSI()
         let cleanedStderr = stderr.strippingANSI()
+        let shouldShowAttemptedPaths = executablePath == nil || !succeeded
         let sections = [
             "Command: \(displayCommand)",
             workingDirectory.map { "Working Directory: \($0)" },
             cleanedStdout.isEmpty ? nil : "STDOUT\n\(cleanedStdout)",
             cleanedStderr.isEmpty ? nil : "STDERR\n\(cleanedStderr)",
-            attemptedPaths.isEmpty ? nil : "Attempted npx paths:\n\(attemptedPaths.joined(separator: "\n"))",
+            (shouldShowAttemptedPaths && !attemptedPaths.isEmpty) ? "Attempted npx paths:\n\(attemptedPaths.joined(separator: "\n"))" : nil,
             "Exit Code: \(exitCode)"
         ]
         return sections.compactMap { $0 }.joined(separator: "\n\n")
+    }
+}
+
+enum InteractiveTerminalApp: String, CaseIterable {
+    case terminal
+    case iTerm2
+    case ghostty
+    case kitty
+
+    var displayName: String {
+        switch self {
+        case .terminal:
+            return "Terminal"
+        case .iTerm2:
+            return "iTerm2"
+        case .ghostty:
+            return "Ghostty"
+        case .kitty:
+            return "Kitty"
+        }
+    }
+
+    var bundleIdentifier: String {
+        switch self {
+        case .terminal:
+            return "com.apple.Terminal"
+        case .iTerm2:
+            return "com.googlecode.iterm2"
+        case .ghostty:
+            return "com.mitchellh.ghostty"
+        case .kitty:
+            return "net.kovidgoyal.kitty"
+        }
+    }
+
+    var executableRelativePath: String? {
+        switch self {
+        case .terminal, .iTerm2:
+            return nil
+        case .ghostty:
+            return "Contents/MacOS/ghostty"
+        case .kitty:
+            return "Contents/MacOS/kitty"
+        }
     }
 }
 
