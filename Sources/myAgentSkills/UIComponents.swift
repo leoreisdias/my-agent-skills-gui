@@ -539,21 +539,91 @@ final class EmptyStateView: NSView {
 
 @MainActor
 final class ActionBannerView: NSView {
-    init(title: String, message: String, buttonTitle: String? = nil, target: AnyObject? = nil, action: Selector? = nil) {
+    enum Tone {
+        case neutral
+        case highlight
+        case caution
+
+        var backgroundColor: NSColor {
+            switch self {
+            case .neutral:
+                return NSColor.controlBackgroundColor.withAlphaComponent(0.9)
+            case .highlight:
+                return NSColor.controlAccentColor.withAlphaComponent(0.10)
+            case .caution:
+                return NSColor.systemOrange.withAlphaComponent(0.10)
+            }
+        }
+
+        var borderColor: NSColor {
+            switch self {
+            case .neutral:
+                return .separatorColor
+            case .highlight:
+                return NSColor.controlAccentColor.withAlphaComponent(0.35)
+            case .caution:
+                return NSColor.systemOrange.withAlphaComponent(0.35)
+            }
+        }
+
+        var titleColor: NSColor {
+            switch self {
+            case .neutral:
+                return .labelColor
+            case .highlight:
+                return NSColor.controlAccentColor.blended(withFraction: 0.15, of: .labelColor) ?? .labelColor
+            case .caution:
+                return NSColor.systemOrange.blended(withFraction: 0.25, of: .labelColor) ?? .labelColor
+            }
+        }
+
+        var messageColor: NSColor {
+            switch self {
+            case .neutral:
+                return .secondaryLabelColor
+            case .highlight:
+                return NSColor.controlAccentColor.blended(withFraction: 0.55, of: .secondaryLabelColor) ?? .secondaryLabelColor
+            case .caution:
+                return NSColor.systemOrange.blended(withFraction: 0.55, of: .secondaryLabelColor) ?? .secondaryLabelColor
+            }
+        }
+
+        var buttonTint: NSColor {
+            switch self {
+            case .neutral:
+                return .controlAccentColor
+            case .highlight:
+                return .controlAccentColor
+            case .caution:
+                return .systemOrange
+            }
+        }
+    }
+
+    init(
+        title: String,
+        message: String,
+        buttonTitle: String? = nil,
+        target: AnyObject? = nil,
+        action: Selector? = nil,
+        tone: Tone = .neutral
+    ) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
         layer?.cornerRadius = 12
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
-        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.9).cgColor
+        layer?.borderColor = tone.borderColor.cgColor
+        layer?.backgroundColor = tone.backgroundColor.cgColor
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-        titleLabel.alignment = .left
+        titleLabel.alignment = .right
+        titleLabel.textColor = tone.titleColor
 
         let messageLabel = makeBodyLabel(message)
-        messageLabel.textColor = .secondaryLabelColor
+        messageLabel.textColor = tone.messageColor
+        messageLabel.alignment = .right
 
         let textStack = NSStackView(views: [titleLabel, messageLabel])
         textStack.orientation = .vertical
@@ -561,19 +631,33 @@ final class ActionBannerView: NSView {
         textStack.alignment = .width
         textStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let rowStack = NSStackView()
-        rowStack.orientation = .horizontal
-        rowStack.spacing = 12
-        rowStack.alignment = .centerY
-        rowStack.translatesAutoresizingMaskIntoConstraints = false
-        rowStack.addArrangedSubview(textStack)
-
         if let buttonTitle, let action {
             let button = makeActionButton(buttonTitle, target: target, action: action)
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
-            rowStack.addArrangedSubview(button)
+            button.contentTintColor = tone.buttonTint
+
+            let buttonSpacer = NSView()
+            buttonSpacer.translatesAutoresizingMaskIntoConstraints = false
+            buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            buttonSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+            let buttonRow = NSStackView(views: [buttonSpacer, button])
+            buttonRow.orientation = .horizontal
+            buttonRow.spacing = 0
+            buttonRow.alignment = .centerY
+            buttonRow.translatesAutoresizingMaskIntoConstraints = false
+
+            textStack.addArrangedSubview(buttonRow)
+            textStack.setCustomSpacing(10, after: messageLabel)
         }
+
+        let rowStack = NSStackView(views: [textStack])
+        rowStack.orientation = .horizontal
+        rowStack.spacing = 12
+        rowStack.alignment = .centerY
+        rowStack.distribution = .fill
+        rowStack.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(rowStack)
 

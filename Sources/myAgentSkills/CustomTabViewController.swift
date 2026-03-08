@@ -20,6 +20,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     private var filteredSkills: [CustomSkillRecord] = []
     private var currentCategoryFilterOptions: [CategoryFilterOption] = []
     private var selectedCategoryID: String?
+    private var categorizationHelpWindowController: CategorizationHelpWindowController?
 
     init(catalogService: CustomSkillsCatalogService) {
         self.catalogService = catalogService
@@ -207,7 +208,8 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
                 message: "Add `skills.json` to `~/.agents/skills` to group local skills into sections like Frontend, Docs, and Review.",
                 buttonTitle: "Categorize",
                 target: self,
-                action: #selector(showCategorizationHelp)
+                action: #selector(showCategorizationHelp),
+                tone: .highlight
             )
         case .invalid(let message):
             bannerView = ActionBannerView(
@@ -215,7 +217,8 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
                 message: "Showing the flat list for now. \(message)",
                 buttonTitle: "Categorize",
                 target: self,
-                action: #selector(showCategorizationHelp)
+                action: #selector(showCategorizationHelp),
+                tone: .caution
             )
         case .loaded:
             bannerView = nil
@@ -244,28 +247,17 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     @objc private func showCategorizationHelp() {
-        let alert = NSAlert()
-        alert.messageText = "Categorize your skills"
-        alert.informativeText = "Create `~/.agents/skills/skills.json` and the app will group the Skills tab using the categories you define there."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Copy JSON Template")
-        alert.addButton(withTitle: "Close")
-
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 420, height: 260))
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        textView.string = SkillCatalogDefinition.templateJSON
-
-        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 420, height: 260))
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
-        scrollView.documentView = textView
-        alert.accessoryView = scrollView
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        copyToPasteboard(SkillCatalogDefinition.templateJSON)
-        statusLabel.stringValue = "Copied skills.json template to the clipboard."
+        let controller = CategorizationHelpWindowController(
+            templateJSON: SkillCatalogDefinition.templateJSON
+        ) { [weak self] in
+            guard let self else { return }
+            copyToPasteboard(SkillCatalogDefinition.templateJSON)
+            self.statusLabel.stringValue = "Copied skills.json template to the clipboard."
+        }
+        categorizationHelpWindowController = controller
+        controller.showWindow(nil)
+        controller.window?.center()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func renderCategoryFilters() {
@@ -405,5 +397,105 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         if !validCategoryIDs.contains(selectedCategoryID) {
             self.selectedCategoryID = nil
         }
+    }
+}
+
+@MainActor
+private final class CategorizationHelpWindowController: NSWindowController {
+    private let onCopy: () -> Void
+
+    init(templateJSON: String, onCopy: @escaping () -> Void) {
+        self.onCopy = onCopy
+
+        let contentViewController = NSViewController()
+        let contentView = NSView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        contentViewController.view = contentView
+
+        let titleLabel = NSTextField(labelWithString: "Categorize your skills")
+        titleLabel.font = .systemFont(ofSize: 20, weight: .bold)
+
+        let descriptionLabel = makeBodyLabel(
+            "Create `~/.agents/skills/skills.json` and the app will group the Skills tab using the categories you define there."
+        )
+        descriptionLabel.textColor = .secondaryLabelColor
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.string = templateJSON
+
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+        scrollView.documentView = textView
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.heightAnchor.constraint(equalToConstant: 260).isActive = true
+
+        let copyButton = NSButton(title: "Copy JSON Template", target: nil, action: nil)
+        copyButton.bezelStyle = .rounded
+        copyButton.controlSize = .regular
+
+        let closeButton = NSButton(title: "Close", target: nil, action: nil)
+        closeButton.bezelStyle = .rounded
+        closeButton.controlSize = .regular
+
+        let buttonsRow = NSStackView(views: [copyButton, closeButton])
+        buttonsRow.orientation = NSUserInterfaceLayoutOrientation.horizontal
+        buttonsRow.spacing = 10
+        buttonsRow.alignment = NSLayoutConstraint.Attribute.centerY
+        buttonsRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let buttonSpacer = NSView()
+        buttonSpacer.translatesAutoresizingMaskIntoConstraints = false
+        buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        buttonSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        buttonsRow.insertArrangedSubview(buttonSpacer, at: 0)
+
+        let stack = NSStackView(views: [titleLabel, descriptionLabel, scrollView, buttonsRow])
+        stack.orientation = NSUserInterfaceLayoutOrientation.vertical
+        stack.spacing = 14
+        stack.alignment = NSLayoutConstraint.Attribute.width
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        contentView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            contentView.widthAnchor.constraint(equalToConstant: 520),
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
+        ])
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Categorize your skills"
+        window.contentViewController = contentViewController
+        window.isReleasedWhenClosed = false
+
+        super.init(window: window)
+
+        copyButton.target = self
+        copyButton.action = #selector(copyTemplate)
+        closeButton.target = self
+        closeButton.action = #selector(closeWindow)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    @objc private func copyTemplate() {
+        onCopy()
+    }
+
+    @objc private func closeWindow() {
+        close()
     }
 }
