@@ -34,6 +34,15 @@ func makeSecondaryLabel(_ text: String) -> NSTextField {
 }
 
 @MainActor
+func makeBadgeLabel(_ text: String) -> NSTextField {
+    let label = NSTextField(labelWithString: text)
+    label.font = .systemFont(ofSize: 11, weight: .semibold)
+    label.textColor = .secondaryLabelColor
+    label.alignment = .center
+    return label
+}
+
+@MainActor
 func makeActionButton(_ title: String, target: AnyObject?, action: Selector) -> NSButton {
     let button = NSButton(title: title, target: target, action: action)
     button.bezelStyle = .rounded
@@ -179,16 +188,16 @@ final class SkillRowBox: NSView {
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.maximumNumberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
-        titleLabel.alignment = .right
+        titleLabel.alignment = .left
 
         let subtitleLabel = makeSecondaryLabel(subtitle)
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.maximumNumberOfLines = 1
         subtitleLabel.isHidden = subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        subtitleLabel.alignment = .right
+        subtitleLabel.alignment = .left
         bodyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         bodyLabel.textColor = .labelColor
-        bodyLabel.alignment = .right
+        bodyLabel.alignment = .left
 
         actionButtons.forEach {
             $0.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -362,6 +371,106 @@ func makeSectionContainer(title: String, subtitle: String? = nil) -> (container:
 }
 
 @MainActor
+func makeCategorySectionContainer(
+    title: String,
+    subtitle: String? = nil,
+    countText: String? = nil
+) -> (container: NSView, contentStack: NSStackView) {
+    let container = NSView()
+    container.translatesAutoresizingMaskIntoConstraints = false
+    container.wantsLayer = true
+    container.layer?.cornerRadius = 16
+    container.layer?.borderWidth = 1
+    container.layer?.borderColor = NSColor.separatorColor.cgColor
+    container.layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.45).cgColor
+
+    let headerContainer = NSView()
+    headerContainer.translatesAutoresizingMaskIntoConstraints = false
+    headerContainer.wantsLayer = true
+    headerContainer.layer?.cornerRadius = 12
+    headerContainer.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.82).cgColor
+
+    let titleLabel = NSTextField(labelWithString: title)
+    titleLabel.font = .systemFont(ofSize: 18, weight: .bold)
+    titleLabel.alignment = .left
+
+    let titleRow = NSStackView()
+    titleRow.orientation = .horizontal
+    titleRow.spacing = 10
+    titleRow.alignment = .centerY
+    titleRow.translatesAutoresizingMaskIntoConstraints = false
+    titleRow.addArrangedSubview(titleLabel)
+
+    if let countText, !countText.isEmpty {
+        let badgeLabel = makeBadgeLabel(countText)
+        let badgeContainer = NSView()
+        badgeContainer.translatesAutoresizingMaskIntoConstraints = false
+        badgeContainer.wantsLayer = true
+        badgeContainer.layer?.cornerRadius = 9
+        badgeContainer.layer?.backgroundColor = NSColor.quaternaryLabelColor.withAlphaComponent(0.12).cgColor
+        badgeContainer.addSubview(badgeLabel)
+        badgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            badgeLabel.leadingAnchor.constraint(equalTo: badgeContainer.leadingAnchor, constant: 10),
+            badgeLabel.trailingAnchor.constraint(equalTo: badgeContainer.trailingAnchor, constant: -10),
+            badgeLabel.topAnchor.constraint(equalTo: badgeContainer.topAnchor, constant: 4),
+            badgeLabel.bottomAnchor.constraint(equalTo: badgeContainer.bottomAnchor, constant: -4)
+        ])
+        titleRow.addArrangedSubview(badgeContainer)
+    }
+
+    titleRow.addArrangedSubview(NSView())
+
+    let headerViews: [NSView]
+    if let subtitle, !subtitle.isEmpty {
+        let subtitleLabel = makeBodyLabel(subtitle)
+        subtitleLabel.textColor = .secondaryLabelColor
+        headerViews = [titleRow, subtitleLabel]
+    } else {
+        headerViews = [titleRow]
+    }
+
+    let headerStack = NSStackView(views: headerViews)
+    headerStack.orientation = .vertical
+    headerStack.spacing = 6
+    headerStack.alignment = .width
+    headerStack.translatesAutoresizingMaskIntoConstraints = false
+
+    let contentStack = NSStackView()
+    contentStack.orientation = .vertical
+    contentStack.spacing = 14
+    contentStack.alignment = .width
+    contentStack.translatesAutoresizingMaskIntoConstraints = false
+
+    let separator = NSBox()
+    separator.boxType = .separator
+    separator.translatesAutoresizingMaskIntoConstraints = false
+
+    let wrapper = NSStackView(views: [headerContainer, separator, contentStack])
+    wrapper.orientation = .vertical
+    wrapper.spacing = 14
+    wrapper.alignment = .width
+    wrapper.translatesAutoresizingMaskIntoConstraints = false
+
+    container.addSubview(wrapper)
+    headerContainer.addSubview(headerStack)
+
+    NSLayoutConstraint.activate([
+        wrapper.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+        wrapper.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+        wrapper.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
+        wrapper.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -16),
+
+        headerStack.leadingAnchor.constraint(equalTo: headerContainer.leadingAnchor, constant: 16),
+        headerStack.trailingAnchor.constraint(equalTo: headerContainer.trailingAnchor, constant: -16),
+        headerStack.topAnchor.constraint(equalTo: headerContainer.topAnchor, constant: 14),
+        headerStack.bottomAnchor.constraint(equalTo: headerContainer.bottomAnchor, constant: -14)
+    ])
+
+    return (container, contentStack)
+}
+
+@MainActor
 final class EmptyStateView: NSView {
     init(title: String, message: String) {
         super.init(frame: .zero)
@@ -394,6 +503,60 @@ final class EmptyStateView: NSView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 16),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16)
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+@MainActor
+final class ActionBannerView: NSView {
+    init(title: String, message: String, buttonTitle: String? = nil, target: AnyObject? = nil, action: Selector? = nil) {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.borderWidth = 1
+        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.9).cgColor
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.alignment = .left
+
+        let messageLabel = makeBodyLabel(message)
+        messageLabel.textColor = .secondaryLabelColor
+
+        let textStack = NSStackView(views: [titleLabel, messageLabel])
+        textStack.orientation = .vertical
+        textStack.spacing = 4
+        textStack.alignment = .width
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let rowStack = NSStackView()
+        rowStack.orientation = .horizontal
+        rowStack.spacing = 12
+        rowStack.alignment = .centerY
+        rowStack.translatesAutoresizingMaskIntoConstraints = false
+        rowStack.addArrangedSubview(textStack)
+
+        if let buttonTitle, let action {
+            let button = makeActionButton(buttonTitle, target: target, action: action)
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            rowStack.addArrangedSubview(button)
+        }
+
+        addSubview(rowStack)
+
+        NSLayoutConstraint.activate([
+            rowStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            rowStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            rowStack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            rowStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
         ])
     }
 

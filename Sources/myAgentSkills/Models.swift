@@ -202,14 +202,105 @@ struct InstalledSkillRecord: Equatable, Hashable {
     }
 }
 
+struct SkillCatalogScope: Codable, Equatable, Hashable {
+    let id: String
+    let label: String
+    let description: String?
+}
+
+struct SkillCategorizationEntry: Codable, Equatable, Hashable {
+    let folder: String
+    let name: String?
+    let scope: String
+    let platforms: [String]?
+    let tags: [String]?
+}
+
+struct SkillCatalogDefinition: Codable, Equatable {
+    let version: Int
+    let generatedAt: String?
+    let description: String?
+    let scopes: [SkillCatalogScope]
+    let skills: [SkillCategorizationEntry]
+
+    static var templateJSON: String {
+        let template = SkillCatalogDefinition(
+            version: 1,
+            generatedAt: "2026-03-08",
+            description: "Local skill catalog for My Agent Skills.",
+            scopes: [
+                SkillCatalogScope(
+                    id: "frontend",
+                    label: "Frontend",
+                    description: "Skills for UI design, implementation, and frontend quality."
+                ),
+                SkillCatalogScope(
+                    id: "docs",
+                    label: "Docs",
+                    description: "Skills for documentation, guides, and reader-first writing."
+                )
+            ],
+            skills: [
+                SkillCategorizationEntry(
+                    folder: "frontend-design",
+                    name: "frontend-design",
+                    scope: "frontend",
+                    platforms: ["generic"],
+                    tags: ["ui", "design", "frontend"]
+                ),
+                SkillCategorizationEntry(
+                    folder: "documentation-authoring",
+                    name: "documentation-authoring",
+                    scope: "docs",
+                    platforms: ["generic"],
+                    tags: ["docs", "readme", "guides"]
+                )
+            ]
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(template),
+           let string = String(data: data, encoding: .utf8) {
+            return string
+        }
+
+        return "{\n  \"version\": 1,\n  \"scopes\": [],\n  \"skills\": []\n}"
+    }
+}
+
+enum SkillCategorizationState: Equatable {
+    case missing
+    case invalid(message: String)
+    case loaded(SkillCatalogDefinition)
+}
+
+struct CustomSkillsCatalogSnapshot: Equatable {
+    let skills: [CustomSkillRecord]
+    let categorizationState: SkillCategorizationState
+}
+
+struct CustomSkillSection: Equatable {
+    let id: String
+    let title: String
+    let description: String?
+    let skills: [CustomSkillRecord]
+}
+
 struct CustomSkillRecord: Equatable, Hashable {
     let name: String
     let description: String
+    let folderName: String
     let folderURL: URL
     let skillFileURL: URL
+    let categoryScopeID: String?
+    let categoryLabel: String?
+    let categoryDescription: String?
+    let tags: [String]
+    let platforms: [String]
 
     var searchableText: String {
-        [name, description, "Custom Local"].joined(separator: " ").lowercased()
+        [name, description].joined(separator: " ").lowercased()
     }
 }
 

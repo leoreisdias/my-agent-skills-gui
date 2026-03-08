@@ -57,19 +57,78 @@ enum SkillFileParser {
 final class CustomSkillsCatalogService {
     private let rootURL: URL
     private let fileManager: FileManager
+    private let categorizationFileName = "skills.json"
 
     init(rootURL: URL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".agents/skills"), fileManager: FileManager = .default) {
         self.rootURL = rootURL
         self.fileManager = fileManager
     }
 
+    func loadSnapshot() -> CustomSkillsCatalogSnapshot {
+        let categorizationState = loadCategorizationState()
+        let skills = loadSkills(categorizationState: categorizationState)
+        return CustomSkillsCatalogSnapshot(skills: skills, categorizationState: categorizationState)
+    }
+
     func loadSkills() -> [CustomSkillRecord] {
+        loadSnapshot().skills
+    }
+
+    func buildSections(skills: [CustomSkillRecord], categorizationState: SkillCategorizationState) -> [CustomSkillSection] {
+        guard case .loaded(let catalogDefinition) = categorizationState else {
+            return []
+        }
+
+        let orderedSections = catalogDefinition.scopes.compactMap { scope -> CustomSkillSection? in
+            let scopedSkills = skills.filter { $0.categoryScopeID == scope.id }
+            guard !scopedSkills.isEmpty else { return nil }
+
+            return CustomSkillSection(
+                id: scope.id,
+                title: scope.label,
+                description: scope.description,
+                skills: scopedSkills
+            )
+        }
+
+        let uncategorizedSkills = skills.filter { $0.categoryScopeID == nil }
+        guard !uncategorizedSkills.isEmpty else {
+            return orderedSections
+        }
+
+        return orderedSections + [
+            CustomSkillSection(
+                id: "uncategorized",
+                title: "Uncategorized",
+                description: "Skills found in `~/.agents/skills` but not assigned in `skills.json`.",
+                skills: uncategorizedSkills
+            )
+        ]
+    }
+
+    private func loadSkills(categorizationState: SkillCategorizationState) -> [CustomSkillRecord] {
         guard let contents = try? fileManager.contentsOfDirectory(
             at: rootURL,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else {
             return []
+        }
+
+        let categorizationByFolder: [String: SkillCategorizationEntry]
+        let scopesByID: [String: SkillCatalogScope]
+        if case .loaded(let definition) = categorizationState {
+            categorizationByFolder = Dictionary(
+                definition.skills.map { ($0.folder, $0) },
+                uniquingKeysWith: { _, latest in latest }
+            )
+            scopesByID = Dictionary(
+                definition.scopes.map { ($0.id, $0) },
+                uniquingKeysWith: { _, latest in latest }
+            )
+        } else {
+            categorizationByFolder = [:]
+            scopesByID = [:]
         }
 
         return contents.compactMap { folderURL in
@@ -79,14 +138,39 @@ final class CustomSkillsCatalogService {
             let contents = (try? String(contentsOf: skillFileURL)) ?? ""
             let metadata = SkillFileParser.parse(contents: contents, fallbackName: folderURL.lastPathComponent)
             let description = metadata.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let folderName = folderURL.lastPathComponent
+            let categorizationEntry = categorizationByFolder[folderName]
+            let scope = categorizationEntry.flatMap { scopesByID[$0.scope] }
             return CustomSkillRecord(
                 name: metadata.name ?? folderURL.lastPathComponent,
                 description: description?.isEmpty == false ? description! : "Custom Local",
+                folderName: folderName,
                 folderURL: folderURL,
-                skillFileURL: skillFileURL
+                skillFileURL: skillFileURL,
+                categoryScopeID: scope?.id,
+                categoryLabel: scope?.label,
+                categoryDescription: scope?.description,
+                tags: categorizationEntry?.tags ?? [],
+                platforms: categorizationEntry?.platforms ?? []
             )
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    private func loadCategorizationState() -> SkillCategorizationState {
+        let categorizationFileURL = rootURL.appendingPathComponent(categorizationFileName)
+        guard fileManager.fileExists(atPath: categorizationFileURL.path) else {
+            return .missing
+        }
+
+        do {
+            let data = try Data(contentsOf: categorizationFileURL)
+            let decoder = JSONDecoder()
+            let definition = try decoder.decode(SkillCatalogDefinition.self, from: data)
+            return .loaded(definition)
+        } catch {
+            return .invalid(message: error.localizedDescription)
+        }
     }
 
     func filter(skills: [CustomSkillRecord], query: String) -> [CustomSkillRecord] {
