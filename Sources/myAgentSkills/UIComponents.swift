@@ -10,6 +10,7 @@ func makeSectionLabel(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
     label.font = .systemFont(ofSize: 13, weight: .semibold)
     label.textColor = .secondaryLabelColor
+    label.alignment = .left
     return label
 }
 
@@ -19,6 +20,7 @@ func makeBodyLabel(_ text: String) -> NSTextField {
     label.font = .systemFont(ofSize: 12)
     label.maximumNumberOfLines = 0
     label.lineBreakMode = .byWordWrapping
+    label.alignment = .left
     return label
 }
 
@@ -27,6 +29,7 @@ func makeSecondaryLabel(_ text: String) -> NSTextField {
     let label = NSTextField(labelWithString: text)
     label.font = .systemFont(ofSize: 11)
     label.textColor = .secondaryLabelColor
+    label.alignment = .left
     return label
 }
 
@@ -176,13 +179,16 @@ final class SkillRowBox: NSView {
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         titleLabel.maximumNumberOfLines = 1
         titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.alignment = .right
 
         let subtitleLabel = makeSecondaryLabel(subtitle)
         subtitleLabel.lineBreakMode = .byTruncatingTail
         subtitleLabel.maximumNumberOfLines = 1
         subtitleLabel.isHidden = subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        subtitleLabel.alignment = .right
         bodyLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         bodyLabel.textColor = .labelColor
+        bodyLabel.alignment = .right
 
         actionButtons.forEach {
             $0.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -319,6 +325,7 @@ func addFullWidthArrangedSubview(_ view: NSView, to stackView: NSStackView) {
 func makeSectionContainer(title: String, subtitle: String? = nil) -> (container: NSView, contentStack: NSStackView) {
     let titleLabel = NSTextField(labelWithString: title)
     titleLabel.font = .systemFont(ofSize: 18, weight: .bold)
+    titleLabel.alignment = .left
 
     let headerViews: [NSView]
     if let subtitle, !subtitle.isEmpty {
@@ -369,6 +376,7 @@ final class EmptyStateView: NSView {
 
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        titleLabel.alignment = .left
 
         let messageLabel = makeBodyLabel(message)
         messageLabel.textColor = .secondaryLabelColor
