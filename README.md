@@ -443,3 +443,19 @@ Add the categorization banner, modal, or Codex output screenshot here.
 Add the categorization onboarding banner or JSON template modal here.
 
 ![Categorization Help](docs/screenshots/categorization-help.png)
+
+## Logbook for Devs
+
+**A tool from the [Logbook for Devs](https://logbookfordevs.com/)**
+
+*Charting the technical seas, one commit at a time.*
+
+## Support Logbook for Devs
+
+If this project is useful to you, you can support more tools like this here:
+
+- [Buy me a coffee on Ko-fi](https://ko-fi.com/logbookfordevs?amount=5)
+- [Buy me lunch on Ko-fi](https://ko-fi.com/logbookfordevs?amount=15)
+- [Buy me dinner on Ko-fi](https://ko-fi.com/logbookfordevs?amount=30)
+- [Support Logbook for Devs on Ko-fi](https://ko-fi.com/logbookfordevs)
+- [Support Logbook for Devs on Buy Me a Coffee](https://buymeacoffee.com/logbookfordevs)
