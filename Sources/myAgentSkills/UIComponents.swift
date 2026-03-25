@@ -534,9 +534,14 @@ func makeScrollableColumn(minHeight: CGFloat, scrollView: NSScrollView = NSScrol
     scrollView.drawsBackground = false
     scrollView.documentView = contentView
     scrollView.translatesAutoresizingMaskIntoConstraints = false
+    scrollView.setContentHuggingPriority(.defaultLow, for: .vertical)
+    scrollView.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+    let minimumHeightConstraint = scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: minHeight)
+    minimumHeightConstraint.priority = .defaultHigh
 
     NSLayoutConstraint.activate([
-        scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: minHeight),
+        minimumHeightConstraint,
         contentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor)
     ])
 

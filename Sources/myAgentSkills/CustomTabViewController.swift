@@ -381,7 +381,6 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         guard autoCategorizeRunState != .running else { return }
         isShowingAutoCategorizeConfirmation = true
         transientStatusMessage = "Review the Auto Categorize confirmation. The Codex run output will appear below inside the app."
-        autoCategorizeOutputSection.setExpanded(true)
         autoCategorizeOverlay.isHidden = false
         view.window?.makeFirstResponder(autoCategorizeInstructionField)
         updateStatusLabel()
