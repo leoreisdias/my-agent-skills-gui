@@ -93,12 +93,21 @@ final class CodexCategorizationService {
 
     func run(
         snapshot: CustomSkillsCatalogSnapshot,
+        mode: SkillCategorizationRunMode? = nil,
         additionalInstruction: String? = nil,
         onOutput: (@MainActor @Sendable (String) -> Void)? = nil,
         completion: @escaping @MainActor (CLICommandResult) -> Void
     ) {
         let resolution = runtimeResolver.resolveCodex()
-        let prompt = buildPrompt(snapshot: snapshot, additionalInstruction: additionalInstruction)
+        let resolvedMode = mode ?? SkillCategorizationRunMode.recommended(
+            skills: snapshot.skills,
+            categorizationState: snapshot.categorizationState
+        )
+        let prompt = buildPrompt(
+            snapshot: snapshot,
+            mode: resolvedMode,
+            additionalInstruction: additionalInstruction
+        )
         let arguments = buildArguments(prompt: prompt)
         let rootPath = rootURL.path
         let rootURL = self.rootURL
@@ -217,7 +226,11 @@ final class CodexCategorizationService {
         ]
     }
 
-    func buildPrompt(snapshot: CustomSkillsCatalogSnapshot, additionalInstruction: String? = nil) -> String {
+    func buildPrompt(
+        snapshot: CustomSkillsCatalogSnapshot,
+        mode: SkillCategorizationRunMode? = nil,
+        additionalInstruction: String? = nil
+    ) -> String {
         let activeFolders = snapshot.skills
             .filter { !$0.isDisabled }
             .map(\.folderName)
@@ -239,6 +252,10 @@ final class CodexCategorizationService {
             disabledFolders.isEmpty ? "Disabled skill folders: none" : "Disabled skill folders: \(disabledFolders.joined(separator: ", "))",
             knownScopes.isEmpty ? "Existing scopes: none" : "Existing scopes: \(knownScopes.joined(separator: ", "))"
         ].joined(separator: "\n")
+        let resolvedMode = mode ?? SkillCategorizationRunMode.recommended(
+            skills: snapshot.skills,
+            categorizationState: snapshot.categorizationState
+        )
 
         let baseInstructions = """
         You are inside ~/.agents/skills.
@@ -255,8 +272,7 @@ final class CodexCategorizationService {
         - A skill folder is a directory containing SKILL.md.
         - Match skills by folder name.
         - If skills.json is missing, create it.
-        - If skills.json exists and is valid, preserve existing scopes and existing skill mappings.
-        - Append only missing skills that are not already present in skills.json.
+        - If skills.json exists and is valid, preserve existing scopes when they still fit the library well.
         - Create a new scope only when no existing scope is a good fit.
         - Prefer intent-based scopes over umbrella buckets. Avoid broad catch-all scopes like Engineering when narrower scopes such as Debug, Review, Automation, Project Context, or Docs better match how a human would browse the library.
         - Prefer stable categorization. If a tool-specific or workflow-specific scope already exists and clearly fits new skills, keep using it.
@@ -291,7 +307,18 @@ final class CodexCategorizationService {
         case .invalid:
             return baseInstructions + additionalInstructionSection(additionalInstruction) + "\n\nskills.json currently exists but cannot be parsed. Repair it and categorize all discovered skills."
         case .loaded:
-            return baseInstructions + additionalInstructionSection(additionalInstruction) + "\n\nskills.json currently exists and is valid. Keep all current mappings and only append missing skill entries."
+            switch resolvedMode {
+            case .appendMissing:
+                return baseInstructions
+                    + "\n- Preserve all existing skill mappings that are already in skills.json.\n- Append only missing skills that are not already present in skills.json."
+                    + additionalInstructionSection(additionalInstruction)
+                    + "\n\nskills.json currently exists and is valid. Keep all current mappings and only append missing skill entries."
+            case .recategorizeAll:
+                return baseInstructions
+                    + "\n- You may revise existing skill-to-scope mappings when the current categorization no longer fits the library or the latest user guidance.\n- Keep valid existing scopes that still fit naturally, but reorganize skills when a better taxonomy is clearer.\n- Ensure every discovered skill still appears exactly once in skills.json after the rewrite."
+                    + additionalInstructionSection(additionalInstruction)
+                    + "\n\nskills.json currently exists and is valid. Re-categorize the full library, reconsider existing mappings using the latest user guidance, and keep the result valid and complete."
+            }
         }
     }
 

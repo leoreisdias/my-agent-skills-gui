@@ -560,21 +560,13 @@ func makeSectionContainer(title: String, subtitle: String? = nil) -> (container:
     titleLabel.font = .systemFont(ofSize: 18, weight: .bold)
     titleLabel.alignment = .left
 
-    let headerViews: [NSView]
-    if let subtitle, !subtitle.isEmpty {
-        let subtitleLabel = makeSecondaryLabel(subtitle)
-        headerViews = [titleLabel, subtitleLabel]
-    } else {
-        headerViews = [titleLabel]
-    }
-
     let contentStack = NSStackView()
     contentStack.orientation = .vertical
     contentStack.spacing = 10
     contentStack.alignment = .width
     contentStack.translatesAutoresizingMaskIntoConstraints = false
 
-    let wrapper = NSStackView(views: headerViews + [contentStack])
+    let wrapper = NSStackView()
     wrapper.orientation = .vertical
     wrapper.spacing = 10
     wrapper.alignment = .width
@@ -583,6 +575,15 @@ func makeSectionContainer(title: String, subtitle: String? = nil) -> (container:
     let container = NSView()
     container.translatesAutoresizingMaskIntoConstraints = false
     container.addSubview(wrapper)
+
+    addFullWidthArrangedSubview(titleLabel, to: wrapper)
+
+    if let subtitle, !subtitle.isEmpty {
+        let subtitleLabel = makeSecondaryLabel(subtitle)
+        addFullWidthArrangedSubview(subtitleLabel, to: wrapper)
+    }
+
+    addFullWidthArrangedSubview(contentStack, to: wrapper)
 
     NSLayoutConstraint.activate([
         wrapper.leadingAnchor.constraint(equalTo: container.leadingAnchor),

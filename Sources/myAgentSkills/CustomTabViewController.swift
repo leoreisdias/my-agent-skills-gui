@@ -7,7 +7,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         let title: String
     }
 
-    private enum AutoCategorizeRunState {
+    private enum SkillCategorizationRunState {
         case idle
         case running
         case succeeded
@@ -17,6 +17,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     private let catalogService: CustomSkillsCatalogService
     private let codexCategorizationService: CodexCategorizationService
     private let searchField = NSSearchField()
+    private let recategorizeButton = NSButton()
     private let bannerContainer = NSView()
     private let categoryFiltersContainer = NSView()
     private let categoryFiltersView = WrappingButtonListView()
@@ -35,7 +36,8 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     private var categorizationHelpWindowController: CategorizationHelpWindowController?
     private var transientStatusMessage: String?
     private var committedQuery = ""
-    private var autoCategorizeRunState: AutoCategorizeRunState = .idle
+    private var autoCategorizeRunState: SkillCategorizationRunState = .idle
+    private var activeCategorizationRunMode: SkillCategorizationRunMode = .appendMissing
     private var isShowingAutoCategorizeConfirmation = false
     private var autoCategorizeStreamedOutput = false
 
@@ -69,11 +71,18 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         searchField.placeholderString = "Search local skills by name or description"
         searchField.delegate = self
         autoCategorizeInstructionField.placeholderString = "Optional: e.g. Keep Stitch skills together, but leave shadcn-ui inside Frontend."
+        recategorizeButton.title = "Re-categorize"
+        recategorizeButton.bezelStyle = .rounded
+        recategorizeButton.controlSize = .small
+        recategorizeButton.target = self
+        recategorizeButton.action = #selector(confirmAutoCategorize)
+        recategorizeButton.contentTintColor = NSColor.systemTeal
+        recategorizeButton.isHidden = true
 
         let searchButton = makeActionButton("Search", target: self, action: #selector(runSearch))
         let refreshButton = makeActionButton("Refresh", target: self, action: #selector(refresh))
 
-        let controls = NSStackView(views: [searchField, searchButton, refreshButton])
+        let controls = NSStackView(views: [searchField, searchButton, refreshButton, recategorizeButton])
         controls.orientation = .horizontal
         controls.spacing = 8
         controls.alignment = .centerY
@@ -110,7 +119,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
         statusLabel.alignment = .right
 
-        autoCategorizeOutput.textView.string = "Run Auto Categorize to see Codex output here."
+        autoCategorizeOutput.textView.string = SkillCategorizationRunMode.appendMissing.outputPlaceholderMessage
 
         let stack = NSStackView(views: [descriptionLabel, bannerContainer, controls, categoryFiltersContainer, statusLabel, scrollView, autoCategorizeOutputSection])
         stack.orientation = .vertical
@@ -181,6 +190,9 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         }
         catalogSnapshot = catalogService.loadSnapshot()
         allSkills = catalogSnapshot.skills
+        if autoCategorizeRunState != .running, !autoCategorizeStreamedOutput {
+            autoCategorizeOutput.textView.string = currentCategorizationRunMode().outputPlaceholderMessage
+        }
         ensureValidSelectedCategory()
         applyFilter()
     }
@@ -260,6 +272,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     private func applyFilter() {
         let categoryFilteredSkills = skillsMatchingSelectedCategory(allSkills)
         filteredSkills = catalogService.filter(skills: categoryFilteredSkills, query: committedQuery)
+        updateRecategorizeButton()
         renderBanner()
         renderCategoryFilters()
         updateStatusLabel()
@@ -303,6 +316,11 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     private func renderBanner() {
         bannerContainer.subviews.forEach { $0.removeFromSuperview() }
 
+        guard autoCategorizeRunState != .running else {
+            bannerContainer.isHidden = true
+            return
+        }
+
         let bannerView: NSView?
         switch catalogSnapshot.categorizationState {
         case .missing:
@@ -313,7 +331,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
                 target: self,
                 action: #selector(confirmAutoCategorize),
                 tone: .highlight,
-                buttonEnabled: autoCategorizeRunState != .running,
+                buttonEnabled: true,
                 secondaryButtonTitle: "Categorize",
                 secondaryTarget: self,
                 secondaryAction: #selector(showCategorizationHelp)
@@ -326,27 +344,21 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
                 target: self,
                 action: #selector(confirmAutoCategorize),
                 tone: .caution,
-                buttonEnabled: autoCategorizeRunState != .running,
+                buttonEnabled: true,
                 secondaryButtonTitle: "Categorize",
                 secondaryTarget: self,
                 secondaryAction: #selector(showCategorizationHelp)
             )
         case .loaded:
             if hasUncategorizedSkills(in: allSkills) {
-                let title = autoCategorizeRunState == .running
-                    ? "Auto categorization is running"
-                    : "Some skills still need categories"
-                let message = autoCategorizeRunState == .running
-                    ? "Codex is updating `skills.json` now. Open `Auto Categorize Output` below to follow the run inside the app."
-                    : "Use Auto Categorize to ask Codex to update `skills.json` and append the skills that are still uncategorized."
                 bannerView = ActionBannerView(
-                    title: title,
-                    message: message,
+                    title: "Some skills still need categories",
+                    message: "Use Auto Categorize to ask Codex to update `skills.json` and append the skills that are still uncategorized.",
                     buttonTitle: "Auto Categorize",
                     target: self,
                     action: #selector(confirmAutoCategorize),
                     tone: .highlight,
-                    buttonEnabled: autoCategorizeRunState != .running,
+                    buttonEnabled: true,
                     secondaryButtonTitle: "Categorize",
                     secondaryTarget: self,
                     secondaryAction: #selector(showCategorizationHelp)
@@ -395,8 +407,10 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
     @objc private func confirmAutoCategorize() {
         guard autoCategorizeRunState != .running else { return }
+        activeCategorizationRunMode = currentCategorizationRunMode()
         isShowingAutoCategorizeConfirmation = true
-        transientStatusMessage = "Review the Auto Categorize confirmation. The Codex run output will appear below inside the app."
+        configureAutoCategorizeOverlay()
+        transientStatusMessage = activeCategorizationRunMode.confirmationStatusMessage
         autoCategorizeOverlay.isHidden = false
         view.window?.makeFirstResponder(autoCategorizeInstructionField)
         updateStatusLabel()
@@ -437,6 +451,20 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         categoryFiltersView.setButtons(buttons)
     }
 
+    private func updateRecategorizeButton() {
+        let shouldShowButton: Bool
+        switch catalogSnapshot.categorizationState {
+        case .loaded:
+            shouldShowButton = !hasUncategorizedSkills(in: allSkills) && autoCategorizeRunState != .running
+        case .missing, .invalid:
+            shouldShowButton = false
+        }
+
+        recategorizeButton.isHidden = !shouldShowButton
+        recategorizeButton.isEnabled = autoCategorizeRunState != .running
+        recategorizeButton.title = currentCategorizationRunMode().actionButtonTitle
+    }
+
     private func renderRows() {
         rowsStack.arrangedSubviews.forEach {
             rowsStack.removeArrangedSubview($0)
@@ -464,20 +492,23 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
     private func runAutoCategorize() {
         guard autoCategorizeRunState != .running else { return }
+        let mode = activeCategorizationRunMode
 
         isShowingAutoCategorizeConfirmation = false
         autoCategorizeOverlay.isHidden = true
         autoCategorizeRunState = .running
-        transientStatusMessage = "Running Codex auto-categorization. Open `Auto Categorize Output` below to follow the process."
+        transientStatusMessage = mode.runningStatusMessage
         autoCategorizeStreamedOutput = false
-        autoCategorizeOutput.textView.string = "Starting Codex auto-categorization...\n\nLive Codex output will appear here.\n"
+        autoCategorizeOutput.textView.string = mode.outputStartMessage
         autoCategorizeOutputSection.setExpanded(true)
+        updateRecategorizeButton()
         renderBanner()
         updateStatusLabel()
 
         let snapshot = catalogSnapshot
         codexCategorizationService.run(
             snapshot: snapshot,
+            mode: mode,
             additionalInstruction: autoCategorizeInstructionField.stringValue,
             onOutput: { [weak self] chunk in
                 guard let self else { return }
@@ -494,7 +525,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
             guard result.succeeded else {
                 self.autoCategorizeRunState = .failed
-                self.transientStatusMessage = "Auto Categorize failed. Review `Auto Categorize Output` below for details."
+                self.transientStatusMessage = mode.failureStatusMessage
                 self.renderBanner()
                 self.updateStatusLabel()
                 return
@@ -507,10 +538,10 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
             if case .loaded = self.catalogSnapshot.categorizationState,
                !self.hasUncategorizedSkills(in: self.allSkills) {
                 self.autoCategorizeRunState = .succeeded
-                self.transientStatusMessage = "Auto Categorize updated `skills.json` successfully."
+                self.transientStatusMessage = mode.successStatusMessage
             } else {
                 self.autoCategorizeRunState = .failed
-                self.transientStatusMessage = "Codex finished, but `skills.json` still needs review."
+                self.transientStatusMessage = mode.reviewStatusMessage
             }
 
             self.applyFilter()
@@ -528,12 +559,14 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         container.layer?.borderColor = NSColor.systemTeal.withAlphaComponent(0.4).cgColor
         container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        let titleLabel = NSTextField(labelWithString: "Auto Categorize with Codex")
+        let mode = activeCategorizationRunMode
+
+        let titleLabel = NSTextField(labelWithString: mode.confirmationTitle)
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = NSColor.systemTeal.blended(withFraction: 0.2, of: .labelColor) ?? .labelColor
         titleLabel.alignment = .right
 
-        let messageLabel = makeBodyLabel("AI Skills Companion will ask Codex to create or update `~/.agents/skills/skills.json`, preserve existing mappings, append only missing skills, and leave the run details in the `Auto Categorize Output` section below.")
+        let messageLabel = makeBodyLabel(mode.confirmationMessage)
         messageLabel.textColor = .secondaryLabelColor
         messageLabel.alignment = .right
 
@@ -548,7 +581,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         let exampleLabel = makeSecondaryLabel("Example: Put all of my ShadCN skills in a specific group, but keep Stitch and Remotion together under Stitch.")
         exampleLabel.alignment = .right
 
-        let runButton = makeActionButton("Run Auto Categorize", target: self, action: #selector(runAutoCategorizeFromBanner))
+        let runButton = makeActionButton(mode.runButtonTitle, target: self, action: #selector(runAutoCategorizeFromBanner))
         runButton.contentTintColor = .systemTeal
         runButton.isEnabled = autoCategorizeRunState != .running
 
@@ -584,6 +617,13 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
             container.widthAnchor.constraint(equalTo: autoCategorizeOverlay.widthAnchor, multiplier: 0.84),
             container.widthAnchor.constraint(lessThanOrEqualToConstant: 860)
         ])
+    }
+
+    private func currentCategorizationRunMode() -> SkillCategorizationRunMode {
+        SkillCategorizationRunMode.recommended(
+            skills: allSkills,
+            categorizationState: catalogSnapshot.categorizationState
+        )
     }
 
     private func appendAutoCategorizeOutput(_ chunk: String) {

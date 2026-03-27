@@ -326,6 +326,12 @@ The app shows `Auto Categorize` when:
 - `skills.json` is invalid
 - valid categorization exists, but some local skills still appear under `Uncategorized`
 
+The app shows `Re-categorize` when:
+
+- `skills.json` is valid
+- every discovered local skill is already categorized
+- you want Codex to rethink the existing grouping with new guidance
+
 When you run `Auto Categorize`, the app:
 
 - runs `codex exec` directly from the app
@@ -335,12 +341,25 @@ When you run `Auto Categorize`, the app:
 - allows Codex to create a new scope only if existing scopes are clearly a poor fit
 - includes both active and disabled skills in the categorization pass
 
+When you run `Re-categorize`, the app:
+
+- runs the same `codex exec` flow directly from the app
+- points Codex at `~/.agents/skills`
+- asks Codex to reconsider existing skill-to-scope mappings using your latest guidance
+- keeps the JSON schema valid and ensures every discovered skill is still represented
+- preserves useful existing scopes when they still fit naturally
+
 Before the run starts, the `Global` tab keeps the confirmation inside the popover instead of opening a separate system alert. That way, the user can stay in context and immediately inspect the run feedback in the same screen.
 
 That confirmation step also includes an optional custom-instruction field for one-off guidance such as:
 
 - `Keep Stitch skills together, but leave shadcn-ui inside Frontend.`
 - `Put all of my ShadCN skills in a dedicated group.`
+
+Those instructions apply to both flows:
+
+- `Auto Categorize` uses them while filling in missing or broken categorization
+- `Re-categorize` uses them while revising an already valid taxonomy
 
 The `Global` tab also includes a collapsible `Auto Categorize Output` section. It expands during a run and streams Codex output live so the app does not feel frozen while categorization is in progress.
 

@@ -191,7 +191,9 @@ final class myAgentSkillsTests: XCTestCase {
         )
 
         XCTAssertTrue(prompt.contains("skills.json currently exists and is valid"))
-        XCTAssertTrue(prompt.contains("Keep all current mappings and only append missing skill entries"))
+        XCTAssertTrue(prompt.contains("Re-categorize the full library"))
+        XCTAssertTrue(prompt.contains("reconsider existing mappings using the latest user guidance"))
+        XCTAssertTrue(prompt.contains("You may revise existing skill-to-scope mappings"))
         XCTAssertTrue(prompt.contains("Existing scopes: Frontend"))
         XCTAssertTrue(prompt.contains("several Stitch-focused skills should live in a dedicated Stitch scope"))
         XCTAssertTrue(prompt.contains("a single shadcn-ui skill should usually remain inside Frontend"))
@@ -201,6 +203,42 @@ final class myAgentSkillsTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Brand-focused or project-focused skills should usually live in Project Context or Brand Context"))
         XCTAssertTrue(prompt.contains("Additional user guidance for this run"))
         XCTAssertTrue(prompt.contains("Put all of my ShadCN skills in a specific group."))
+    }
+
+    func testAutoCategorizePromptForAppendModeKeepsExistingMappings() {
+        let service = CodexCategorizationService(rootURL: URL(fileURLWithPath: "/tmp/skills-root"))
+        let definition = SkillCatalogDefinition(
+            version: 1,
+            generatedAt: "2026-03-08",
+            description: "Test catalog",
+            scopes: [
+                SkillCatalogScope(id: "frontend", label: "Frontend", description: "Frontend work")
+            ],
+            skills: [
+                SkillCategorizationEntry(
+                    folder: "frontend-design",
+                    name: "frontend-design",
+                    scope: "frontend",
+                    platforms: ["generic"],
+                    tags: ["ui"]
+                )
+            ]
+        )
+        let snapshot = CustomSkillsCatalogSnapshot(
+            skills: [
+                makeCustomSkillRecord(folderName: "frontend-design", isDisabled: false, categoryScopeID: "frontend"),
+                makeCustomSkillRecord(folderName: "structured-debugging", isDisabled: false, categoryScopeID: nil)
+            ],
+            categorizationState: .loaded(definition)
+        )
+
+        let prompt = service.buildPrompt(snapshot: snapshot)
+
+        XCTAssertTrue(prompt.contains("skills.json currently exists and is valid"))
+        XCTAssertTrue(prompt.contains("Keep all current mappings and only append missing skill entries"))
+        XCTAssertTrue(prompt.contains("Preserve all existing skill mappings"))
+        XCTAssertTrue(prompt.contains("Append only missing skills"))
+        XCTAssertFalse(prompt.contains("Re-categorize the full library"))
     }
 
     func testAutoCategorizePromptForInvalidCatalogRequestsRepair() {
@@ -214,6 +252,52 @@ final class myAgentSkillsTests: XCTestCase {
 
         XCTAssertTrue(prompt.contains("skills.json currently exists but cannot be parsed"))
         XCTAssertTrue(prompt.contains("repair it"))
+    }
+
+    func testSkillCategorizationRunModeRecommendationMatchesCatalogState() {
+        let loadedDefinition = SkillCatalogDefinition(
+            version: 1,
+            generatedAt: "2026-03-08",
+            description: "Test catalog",
+            scopes: [
+                SkillCatalogScope(id: "frontend", label: "Frontend", description: "Frontend work")
+            ],
+            skills: []
+        )
+
+        XCTAssertEqual(
+            SkillCategorizationRunMode.recommended(
+                skills: [makeCustomSkillRecord(folderName: "frontend-design", isDisabled: false, categoryScopeID: nil)],
+                categorizationState: .missing
+            ),
+            .appendMissing
+        )
+        XCTAssertEqual(
+            SkillCategorizationRunMode.recommended(
+                skills: [
+                    makeCustomSkillRecord(folderName: "frontend-design", isDisabled: false, categoryScopeID: "frontend"),
+                    makeCustomSkillRecord(folderName: "structured-debugging", isDisabled: false, categoryScopeID: nil)
+                ],
+                categorizationState: .loaded(loadedDefinition)
+            ),
+            .appendMissing
+        )
+        XCTAssertEqual(
+            SkillCategorizationRunMode.recommended(
+                skills: [makeCustomSkillRecord(folderName: "frontend-design", isDisabled: false, categoryScopeID: "frontend")],
+                categorizationState: .loaded(loadedDefinition)
+            ),
+            .recategorizeAll
+        )
+    }
+
+    func testReCategorizationModeUsesDistinctUserFacingCopy() {
+        XCTAssertEqual(SkillCategorizationRunMode.appendMissing.actionButtonTitle, "Auto Categorize")
+        XCTAssertEqual(SkillCategorizationRunMode.recategorizeAll.actionButtonTitle, "Re-categorize")
+        XCTAssertTrue(SkillCategorizationRunMode.recategorizeAll.confirmationMessage.contains("reconsider existing category assignments"))
+        XCTAssertTrue(SkillCategorizationRunMode.recategorizeAll.confirmationStatusMessage.contains("may revise existing category assignments"))
+        XCTAssertTrue(SkillCategorizationRunMode.recategorizeAll.successStatusMessage.contains("Re-categorization updated"))
+        XCTAssertTrue(SkillCategorizationRunMode.recategorizeAll.reviewStatusMessage.contains("finished re-categorizing"))
     }
 
     func testInstallWizardBuildsExpectedCommand() {
@@ -599,7 +683,11 @@ final class myAgentSkillsTests: XCTestCase {
     }
 }
 
-private func makeCustomSkillRecord(folderName: String, isDisabled: Bool) -> CustomSkillRecord {
+private func makeCustomSkillRecord(
+    folderName: String,
+    isDisabled: Bool,
+    categoryScopeID: String? = nil
+) -> CustomSkillRecord {
     CustomSkillRecord(
         name: folderName,
         originalName: folderName,
@@ -609,8 +697,8 @@ private func makeCustomSkillRecord(folderName: String, isDisabled: Bool) -> Cust
         skillFileURL: URL(fileURLWithPath: "/tmp/\(folderName)/SKILL.md"),
         isDisabled: isDisabled,
         storageLocation: isDisabled ? .disabled : .active,
-        categoryScopeID: nil,
-        categoryLabel: nil,
+        categoryScopeID: categoryScopeID,
+        categoryLabel: categoryScopeID == nil ? nil : "Category",
         categoryDescription: nil,
         tags: [],
         platforms: []
