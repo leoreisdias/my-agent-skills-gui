@@ -233,6 +233,122 @@ enum SkillCategorizationState: Equatable {
     case loaded(SkillCatalogDefinition)
 }
 
+enum SkillCategorizationRunMode: Equatable {
+    case appendMissing
+    case recategorizeAll
+
+    static func recommended(
+        skills: [CustomSkillRecord],
+        categorizationState: SkillCategorizationState
+    ) -> Self {
+        guard case .loaded = categorizationState else {
+            return .appendMissing
+        }
+
+        let hasUncategorizedSkills = skills.contains { $0.categoryScopeID == nil }
+        return hasUncategorizedSkills ? .appendMissing : .recategorizeAll
+    }
+
+    var actionButtonTitle: String {
+        switch self {
+        case .appendMissing:
+            return "Auto Categorize"
+        case .recategorizeAll:
+            return "Re-categorize"
+        }
+    }
+
+    var confirmationTitle: String {
+        switch self {
+        case .appendMissing:
+            return "Auto Categorize with Codex"
+        case .recategorizeAll:
+            return "Re-categorize with Codex"
+        }
+    }
+
+    var confirmationMessage: String {
+        switch self {
+        case .appendMissing:
+            return "AI Skills Companion will ask Codex to create or update `~/.agents/skills/skills.json`, preserve existing mappings, append only missing skills, and leave the run details in the `Auto Categorize Output` section below."
+        case .recategorizeAll:
+            return "AI Skills Companion will ask Codex to rewrite `~/.agents/skills/skills.json`, reconsider existing category assignments using your guidance, and leave the run details in the `Auto Categorize Output` section below."
+        }
+    }
+
+    var runButtonTitle: String {
+        switch self {
+        case .appendMissing:
+            return "Run Auto Categorize"
+        case .recategorizeAll:
+            return "Run Re-categorization"
+        }
+    }
+
+    var confirmationStatusMessage: String {
+        switch self {
+        case .appendMissing:
+            return "Review the Auto Categorize confirmation. The Codex run output will appear below inside the app."
+        case .recategorizeAll:
+            return "Review the re-categorization confirmation. Codex may revise existing category assignments during this run."
+        }
+    }
+
+    var runningStatusMessage: String {
+        switch self {
+        case .appendMissing:
+            return "Running Codex auto-categorization. Open `Auto Categorize Output` below to follow the process."
+        case .recategorizeAll:
+            return "Running Codex re-categorization. Open `Auto Categorize Output` below to follow the process."
+        }
+    }
+
+    var outputPlaceholderMessage: String {
+        switch self {
+        case .appendMissing:
+            return "Run Auto Categorize to see Codex output here."
+        case .recategorizeAll:
+            return "Run Re-categorization to see Codex output here."
+        }
+    }
+
+    var outputStartMessage: String {
+        switch self {
+        case .appendMissing:
+            return "Starting Codex auto-categorization...\n\nLive Codex output will appear here.\n"
+        case .recategorizeAll:
+            return "Starting Codex re-categorization...\n\nLive Codex output will appear here.\n"
+        }
+    }
+
+    var failureStatusMessage: String {
+        switch self {
+        case .appendMissing:
+            return "Auto Categorize failed. Review `Auto Categorize Output` below for details."
+        case .recategorizeAll:
+            return "Re-categorization failed. Review `Auto Categorize Output` below for details."
+        }
+    }
+
+    var successStatusMessage: String {
+        switch self {
+        case .appendMissing:
+            return "Auto Categorize updated `skills.json` successfully."
+        case .recategorizeAll:
+            return "Re-categorization updated `skills.json` successfully."
+        }
+    }
+
+    var reviewStatusMessage: String {
+        switch self {
+        case .appendMissing:
+            return "Codex finished, but `skills.json` still needs review."
+        case .recategorizeAll:
+            return "Codex finished re-categorizing, but `skills.json` still needs review."
+        }
+    }
+}
+
 struct CustomSkillsCatalogSnapshot: Equatable {
     let skills: [CustomSkillRecord]
     let categorizationState: SkillCategorizationState
@@ -256,6 +372,7 @@ enum CustomSkillStorageLocation: String, Equatable, Hashable {
 
 struct CustomSkillRecord: Equatable, Hashable {
     let name: String
+    let originalName: String
     let description: String
     let folderName: String
     let folderURL: URL
@@ -268,8 +385,12 @@ struct CustomSkillRecord: Equatable, Hashable {
     let tags: [String]
     let platforms: [String]
 
+    var hasAlias: Bool {
+        name != originalName
+    }
+
     var searchableText: String {
-        [name, description].joined(separator: " ").lowercased()
+        [name, originalName, description, folderName].joined(separator: " ").lowercased()
     }
 }
 

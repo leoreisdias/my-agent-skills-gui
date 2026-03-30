@@ -35,14 +35,13 @@ AI Skills Companion gives you:
 ### Build
 
 ```bash
-swift build
 ./build-app.sh
 ```
 
 ### Run
 
 ```bash
-open "AI Skills Companion.app"
+./launch.sh
 ```
 
 ### Install in Applications
@@ -55,12 +54,43 @@ cp -r "AI Skills Companion.app" /Applications/
 
 After that, you can launch it like any other Mac app without needing to open it from the project folder each time.
 
+### Version Metadata
+
+Build metadata now lives in:
+
+```bash
+./version.env
+```
+
+This file controls the packaged app version, build number, bundle identifier, and menu bar flag without requiring you to hand-edit the generated `.app` bundle.
+
 ### Menu Bar Behavior
 
 - Left click the menu bar icon to open or close the app popover.
 - Right click the menu bar icon to open a small menu with `Quit AI Skills Companion`.
 - Clicking outside the popover closes it automatically.
 - Pressing `Esc` closes the popover too.
+
+### App Updates
+
+AI Skills Companion can check GitHub Releases for a newer version.
+
+- Click `Check for Updates` in the popover header.
+- If a newer release exists, the app shows:
+  - your current version
+  - the latest version
+  - a `Download DMG` action
+  - an `Open Release` action
+- `Download DMG` saves the latest DMG into your Downloads folder and opens it automatically.
+
+To replace the current app cleanly:
+
+1. keep your current app in `/Applications`
+2. open the downloaded DMG
+3. drag the new `AI Skills Companion.app` into `Applications`
+4. choose `Replace` if Finder asks
+
+That replaces the app bundle itself, not your preferences or local skill files.
 
 ## What The App Contains
 
@@ -296,6 +326,12 @@ The app shows `Auto Categorize` when:
 - `skills.json` is invalid
 - valid categorization exists, but some local skills still appear under `Uncategorized`
 
+The app shows `Re-categorize` when:
+
+- `skills.json` is valid
+- every discovered local skill is already categorized
+- you want Codex to rethink the existing grouping with new guidance
+
 When you run `Auto Categorize`, the app:
 
 - runs `codex exec` directly from the app
@@ -305,12 +341,25 @@ When you run `Auto Categorize`, the app:
 - allows Codex to create a new scope only if existing scopes are clearly a poor fit
 - includes both active and disabled skills in the categorization pass
 
+When you run `Re-categorize`, the app:
+
+- runs the same `codex exec` flow directly from the app
+- points Codex at `~/.agents/skills`
+- asks Codex to reconsider existing skill-to-scope mappings using your latest guidance
+- keeps the JSON schema valid and ensures every discovered skill is still represented
+- preserves useful existing scopes when they still fit naturally
+
 Before the run starts, the `Global` tab keeps the confirmation inside the popover instead of opening a separate system alert. That way, the user can stay in context and immediately inspect the run feedback in the same screen.
 
 That confirmation step also includes an optional custom-instruction field for one-off guidance such as:
 
 - `Keep Stitch skills together, but leave shadcn-ui inside Frontend.`
 - `Put all of my ShadCN skills in a dedicated group.`
+
+Those instructions apply to both flows:
+
+- `Auto Categorize` uses them while filling in missing or broken categorization
+- `Re-categorize` uses them while revising an already valid taxonomy
 
 The `Global` tab also includes a collapsible `Auto Categorize Output` section. It expands during a run and streams Codex output live so the app does not feel frozen while categorization is in progress.
 
@@ -386,9 +435,9 @@ If your local toolchain cannot import `XCTest`, align Xcode / Command Line Tools
 Recommended validation commands:
 
 ```bash
-swift build
 swift test
 ./build-app.sh
+./compile_and_run.sh
 ```
 
 The packaged app is generated as:

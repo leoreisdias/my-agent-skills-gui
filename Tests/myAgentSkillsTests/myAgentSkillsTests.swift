@@ -2,6 +2,44 @@ import XCTest
 @testable import myAgentSkills
 
 final class myAgentSkillsTests: XCTestCase {
+    func testAppVersionComparesSemantically() {
+        XCTAssertTrue(AppVersion("v0.1.1") > AppVersion("0.1.0"))
+        XCTAssertTrue(AppVersion("1.0.0") > AppVersion("0.9.9"))
+        XCTAssertEqual(AppVersion("v0.1.0"), AppVersion("0.1.0"))
+    }
+
+    func testUpdateServicePicksPreferredDMGAsset() throws {
+        let json = """
+        {
+          "tag_name": "v0.1.1",
+          "html_url": "https://github.com/logbookfordevs/ai-skills-companion-menubar/releases/tag/v0.1.1",
+          "body": "Release notes",
+          "assets": [
+            {
+              "name": "checksums.txt",
+              "browser_download_url": "https://example.com/checksums.txt"
+            },
+            {
+              "name": "AI Skills Companion.dmg",
+              "browser_download_url": "https://example.com/AI%20Skills%20Companion.dmg"
+            }
+          ]
+        }
+        """
+
+        let release = try JSONDecoder().decode(GitHubRelease.self, from: Data(json.utf8))
+        let info = AppUpdateInfo(
+            currentVersion: AppVersion("0.1.0"),
+            latestVersion: AppVersion(release.tagName),
+            releaseURL: release.htmlURL,
+            downloadURL: release.assets.first(where: { $0.name == "AI Skills Companion.dmg" })?.downloadURL,
+            releaseNotes: release.body ?? ""
+        )
+
+        XCTAssertEqual(info.latestVersion, AppVersion("0.1.1"))
+        XCTAssertEqual(info.downloadURL?.absoluteString, "https://example.com/AI%20Skills%20Companion.dmg")
+    }
+
     func testParsesCustomSkillFrontmatter() {
         let contents = """
         ---
@@ -24,6 +62,7 @@ final class myAgentSkillsTests: XCTestCase {
         let skills = [
             CustomSkillRecord(
                 name: "frontend-design",
+                originalName: "frontend-design",
                 description: "Create distinctive production-grade interfaces",
                 folderName: "frontend-design",
                 folderURL: URL(fileURLWithPath: "/tmp/frontend-design"),
@@ -38,6 +77,7 @@ final class myAgentSkillsTests: XCTestCase {
             ),
             CustomSkillRecord(
                 name: "structured-debugging",
+                originalName: "structured-debugging",
                 description: "Investigate bugs and logs with root-cause clarity",
                 folderName: "structured-debugging",
                 folderURL: URL(fileURLWithPath: "/tmp/structured-debugging"),
@@ -151,7 +191,9 @@ final class myAgentSkillsTests: XCTestCase {
         )
 
         XCTAssertTrue(prompt.contains("skills.json currently exists and is valid"))
-        XCTAssertTrue(prompt.contains("Keep all current mappings and only append missing skill entries"))
+        XCTAssertTrue(prompt.contains("Re-categorize the full library"))
+        XCTAssertTrue(prompt.contains("reconsider existing mappings using the latest user guidance"))
+        XCTAssertTrue(prompt.contains("You may revise existing skill-to-scope mappings"))
         XCTAssertTrue(prompt.contains("Existing scopes: Frontend"))
         XCTAssertTrue(prompt.contains("several Stitch-focused skills should live in a dedicated Stitch scope"))
         XCTAssertTrue(prompt.contains("a single shadcn-ui skill should usually remain inside Frontend"))
@@ -161,6 +203,42 @@ final class myAgentSkillsTests: XCTestCase {
         XCTAssertTrue(prompt.contains("Brand-focused or project-focused skills should usually live in Project Context or Brand Context"))
         XCTAssertTrue(prompt.contains("Additional user guidance for this run"))
         XCTAssertTrue(prompt.contains("Put all of my ShadCN skills in a specific group."))
+    }
+
+    func testAutoCategorizePromptForAppendModeKeepsExistingMappings() {
+        let service = CodexCategorizationService(rootURL: URL(fileURLWithPath: "/tmp/skills-root"))
+        let definition = SkillCatalogDefinition(
+            version: 1,
+            generatedAt: "2026-03-08",
+            description: "Test catalog",
+            scopes: [
+                SkillCatalogScope(id: "frontend", label: "Frontend", description: "Frontend work")
+            ],
+            skills: [
+                SkillCategorizationEntry(
+                    folder: "frontend-design",
+                    name: "frontend-design",
+                    scope: "frontend",
+                    platforms: ["generic"],
+                    tags: ["ui"]
+                )
+            ]
+        )
+        let snapshot = CustomSkillsCatalogSnapshot(
+            skills: [
+                makeCustomSkillRecord(folderName: "frontend-design", isDisabled: false, categoryScopeID: "frontend"),
+                makeCustomSkillRecord(folderName: "structured-debugging", isDisabled: false, categoryScopeID: nil)
+            ],
+            categorizationState: .loaded(definition)
+        )
+
+        let prompt = service.buildPrompt(snapshot: snapshot)
+
+        XCTAssertTrue(prompt.contains("skills.json currently exists and is valid"))
+        XCTAssertTrue(prompt.contains("Keep all current mappings and only append missing skill entries"))
+        XCTAssertTrue(prompt.contains("Preserve all existing skill mappings"))
+        XCTAssertTrue(prompt.contains("Append only missing skills"))
+        XCTAssertFalse(prompt.contains("Re-categorize the full library"))
     }
 
     func testAutoCategorizePromptForInvalidCatalogRequestsRepair() {
@@ -174,6 +252,52 @@ final class myAgentSkillsTests: XCTestCase {
 
         XCTAssertTrue(prompt.contains("skills.json currently exists but cannot be parsed"))
         XCTAssertTrue(prompt.contains("repair it"))
+    }
+
+    func testSkillCategorizationRunModeRecommendationMatchesCatalogState() {
+        let loadedDefinition = SkillCatalogDefinition(
+            version: 1,
+            generatedAt: "2026-03-08",
+            description: "Test catalog",
+            scopes: [
+                SkillCatalogScope(id: "frontend", label: "Frontend", description: "Frontend work")
+            ],
+            skills: []
+        )
+
+        XCTAssertEqual(
+            SkillCategorizationRunMode.recommended(
+                skills: [makeCustomSkillRecord(folderName: "frontend-design", isDisabled: false, categoryScopeID: nil)],
+                categorizationState: .missing
+            ),
+            .appendMissing
+        )
+        XCTAssertEqual(
+            SkillCategorizationRunMode.recommended(
+                skills: [
+                    makeCustomSkillRecord(folderName: "frontend-design", isDisabled: false, categoryScopeID: "frontend"),
+                    makeCustomSkillRecord(folderName: "structured-debugging", isDisabled: false, categoryScopeID: nil)
+                ],
+                categorizationState: .loaded(loadedDefinition)
+            ),
+            .appendMissing
+        )
+        XCTAssertEqual(
+            SkillCategorizationRunMode.recommended(
+                skills: [makeCustomSkillRecord(folderName: "frontend-design", isDisabled: false, categoryScopeID: "frontend")],
+                categorizationState: .loaded(loadedDefinition)
+            ),
+            .recategorizeAll
+        )
+    }
+
+    func testReCategorizationModeUsesDistinctUserFacingCopy() {
+        XCTAssertEqual(SkillCategorizationRunMode.appendMissing.actionButtonTitle, "Auto Categorize")
+        XCTAssertEqual(SkillCategorizationRunMode.recategorizeAll.actionButtonTitle, "Re-categorize")
+        XCTAssertTrue(SkillCategorizationRunMode.recategorizeAll.confirmationMessage.contains("reconsider existing category assignments"))
+        XCTAssertTrue(SkillCategorizationRunMode.recategorizeAll.confirmationStatusMessage.contains("may revise existing category assignments"))
+        XCTAssertTrue(SkillCategorizationRunMode.recategorizeAll.successStatusMessage.contains("Re-categorization updated"))
+        XCTAssertTrue(SkillCategorizationRunMode.recategorizeAll.reviewStatusMessage.contains("finished re-categorizing"))
     }
 
     func testInstallWizardBuildsExpectedCommand() {
@@ -238,6 +362,37 @@ final class myAgentSkillsTests: XCTestCase {
         XCTAssertEqual(sections.map(\.title), ["Frontend", "Uncategorized"])
         XCTAssertEqual(sections.first?.skills.map(\.folderName), ["frontend-design"])
         XCTAssertEqual(sections.last?.skills.map(\.folderName), ["structured-debugging"])
+    }
+
+    func testLoadsDisplayAliasFromSkillsJSONWhilePreservingOriginalName() throws {
+        let rootURL = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try makeSkill(named: "structured-debugging", description: "Debug work", in: rootURL)
+
+        let catalogJSON = """
+        {
+          "version": 1,
+          "generatedAt": "2026-03-08",
+          "description": "Test catalog",
+          "scopes": [],
+          "skills": [
+            {
+              "folder": "structured-debugging",
+              "name": "Root Cause Sherlock",
+              "scope": "uncategorized"
+            }
+          ]
+        }
+        """
+        try catalogJSON.write(to: rootURL.appendingPathComponent("skills.json"), atomically: true, encoding: .utf8)
+
+        let service = CustomSkillsCatalogService(rootURL: rootURL)
+        let skill = try XCTUnwrap(service.loadSnapshot().skills.first)
+
+        XCTAssertEqual(skill.name, "Root Cause Sherlock")
+        XCTAssertEqual(skill.originalName, "structured-debugging")
+        XCTAssertTrue(skill.hasAlias)
     }
 
     func testMissingSkillsJSONReportsMissingCategorization() throws {
@@ -368,6 +523,145 @@ final class myAgentSkillsTests: XCTestCase {
         XCTAssertTrue(service.loadSnapshot().skills.isEmpty)
     }
 
+    func testRenameSkillUpdatesExistingSkillsJSONEntryNameOnly() throws {
+        let rootURL = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try makeSkill(named: "structured-debugging", description: "Debug work", in: rootURL)
+
+        let catalogJSON = """
+        {
+          "version": 1,
+          "generatedAt": "2026-03-08",
+          "description": "Test catalog",
+          "scopes": [
+            {
+              "id": "review",
+              "label": "Review",
+              "description": "Review skills"
+            }
+          ],
+          "skills": [
+            {
+              "folder": "structured-debugging",
+              "name": "structured-debugging",
+              "scope": "review",
+              "platforms": ["generic"],
+              "tags": ["debug"]
+            }
+          ]
+        }
+        """
+        try catalogJSON.write(to: rootURL.appendingPathComponent("skills.json"), atomically: true, encoding: .utf8)
+
+        let service = CustomSkillsCatalogService(rootURL: rootURL)
+        let skill = try XCTUnwrap(service.loadSnapshot().skills.first)
+
+        try service.renameSkill(skill, displayName: "Debug Detective")
+
+        let data = try Data(contentsOf: rootURL.appendingPathComponent("skills.json"))
+        let updatedCatalog = try JSONDecoder().decode(SkillCatalogDefinition.self, from: data)
+        let updatedSkill = try XCTUnwrap(updatedCatalog.skills.first)
+
+        XCTAssertEqual(updatedSkill.folder, "structured-debugging")
+        XCTAssertEqual(updatedSkill.name, "Debug Detective")
+        XCTAssertEqual(updatedSkill.scope, "review")
+        XCTAssertEqual(updatedSkill.platforms, ["generic"])
+        XCTAssertEqual(updatedSkill.tags, ["debug"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: rootURL.appendingPathComponent("structured-debugging").path))
+    }
+
+    func testRenameSkillAppendsAliasEntryForUncategorizedSkill() throws {
+        let rootURL = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try makeSkill(named: "frontend-design", description: "UI work", in: rootURL)
+
+        let catalogJSON = """
+        {
+          "version": 1,
+          "generatedAt": "2026-03-08",
+          "description": "Test catalog",
+          "scopes": [],
+          "skills": []
+        }
+        """
+        try catalogJSON.write(to: rootURL.appendingPathComponent("skills.json"), atomically: true, encoding: .utf8)
+
+        let service = CustomSkillsCatalogService(rootURL: rootURL)
+        let skill = try XCTUnwrap(service.loadSnapshot().skills.first)
+
+        try service.renameSkill(skill, displayName: "Frontend Hero")
+
+        let data = try Data(contentsOf: rootURL.appendingPathComponent("skills.json"))
+        let updatedCatalog = try JSONDecoder().decode(SkillCatalogDefinition.self, from: data)
+        let appendedEntry = try XCTUnwrap(updatedCatalog.skills.first(where: { $0.folder == "frontend-design" }))
+
+        XCTAssertEqual(appendedEntry.name, "Frontend Hero")
+        XCTAssertEqual(appendedEntry.scope, "uncategorized")
+    }
+
+    func testRenameSkillFailsWhenSkillsJSONIsMissing() throws {
+        let rootURL = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try makeSkill(named: "frontend-design", description: "UI work", in: rootURL)
+
+        let service = CustomSkillsCatalogService(rootURL: rootURL)
+        let skill = try XCTUnwrap(service.loadSnapshot().skills.first)
+
+        XCTAssertThrowsError(try service.renameSkill(skill, displayName: "Frontend Hero")) { error in
+            XCTAssertEqual(
+                error as? CustomSkillMutationError,
+                .missingCategorizationFile(path: rootURL.appendingPathComponent("skills.json").path)
+            )
+        }
+    }
+
+    func testRenameSkillFailsWhenSkillsJSONIsInvalid() throws {
+        let rootURL = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try makeSkill(named: "frontend-design", description: "UI work", in: rootURL)
+        try "{ invalid json".write(to: rootURL.appendingPathComponent("skills.json"), atomically: true, encoding: .utf8)
+
+        let service = CustomSkillsCatalogService(rootURL: rootURL)
+        let skill = try XCTUnwrap(service.loadSnapshot().skills.first)
+
+        XCTAssertThrowsError(try service.renameSkill(skill, displayName: "Frontend Hero")) { error in
+            guard case .invalidCategorizationFile(let path, _) = error as? CustomSkillMutationError else {
+                return XCTFail("Expected invalid categorization file error.")
+            }
+            XCTAssertEqual(path, rootURL.appendingPathComponent("skills.json").path)
+        }
+    }
+
+    func testRenameSkillFailsForEmptyDisplayName() throws {
+        let rootURL = makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: rootURL) }
+
+        try makeSkill(named: "frontend-design", description: "UI work", in: rootURL)
+        try """
+        {
+          "version": 1,
+          "generatedAt": "2026-03-08",
+          "description": "Test catalog",
+          "scopes": [],
+          "skills": []
+        }
+        """.write(to: rootURL.appendingPathComponent("skills.json"), atomically: true, encoding: .utf8)
+
+        let service = CustomSkillsCatalogService(rootURL: rootURL)
+        let skill = try XCTUnwrap(service.loadSnapshot().skills.first)
+
+        XCTAssertThrowsError(try service.renameSkill(skill, displayName: "   ")) { error in
+            XCTAssertEqual(
+                error as? CustomSkillMutationError,
+                .invalidDisplayName(reason: "Enter a display name before saving.")
+            )
+        }
+    }
+
     private func makeTemporaryDirectory() -> URL {
         let rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
@@ -389,17 +683,22 @@ final class myAgentSkillsTests: XCTestCase {
     }
 }
 
-private func makeCustomSkillRecord(folderName: String, isDisabled: Bool) -> CustomSkillRecord {
+private func makeCustomSkillRecord(
+    folderName: String,
+    isDisabled: Bool,
+    categoryScopeID: String? = nil
+) -> CustomSkillRecord {
     CustomSkillRecord(
         name: folderName,
+        originalName: folderName,
         description: "Description for \(folderName)",
         folderName: folderName,
         folderURL: URL(fileURLWithPath: "/tmp/\(folderName)"),
         skillFileURL: URL(fileURLWithPath: "/tmp/\(folderName)/SKILL.md"),
         isDisabled: isDisabled,
         storageLocation: isDisabled ? .disabled : .active,
-        categoryScopeID: nil,
-        categoryLabel: nil,
+        categoryScopeID: categoryScopeID,
+        categoryLabel: categoryScopeID == nil ? nil : "Category",
         categoryDescription: nil,
         tags: [],
         platforms: []

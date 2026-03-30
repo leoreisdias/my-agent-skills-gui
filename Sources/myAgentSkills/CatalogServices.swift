@@ -55,6 +55,8 @@ enum SkillFileParser {
 }
 
 final class CustomSkillsCatalogService {
+    private static let uncategorizedScopeID = "uncategorized"
+
     private let rootURL: URL
     private let fileManager: FileManager
     private let categorizationFileName = "skills.json"
@@ -163,6 +165,85 @@ final class CustomSkillsCatalogService {
         }
     }
 
+    func renameSkill(_ skill: CustomSkillRecord, displayName: String) throws {
+        let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedDisplayName.isEmpty else {
+            throw CustomSkillMutationError.invalidDisplayName(reason: "Enter a display name before saving.")
+        }
+
+        guard trimmedDisplayName.rangeOfCharacter(from: .newlines) == nil else {
+            throw CustomSkillMutationError.invalidDisplayName(reason: "Display names must stay on a single line.")
+        }
+
+        let categorizationFileURL = rootURL.appendingPathComponent(categorizationFileName)
+        guard fileManager.fileExists(atPath: categorizationFileURL.path) else {
+            throw CustomSkillMutationError.missingCategorizationFile(path: categorizationFileURL.path)
+        }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: categorizationFileURL)
+        } catch {
+            throw CustomSkillMutationError.categorizationWriteFailed(
+                path: categorizationFileURL.path,
+                underlyingMessage: error.localizedDescription
+            )
+        }
+
+        let definition: SkillCatalogDefinition
+        do {
+            definition = try JSONDecoder().decode(SkillCatalogDefinition.self, from: data)
+        } catch {
+            throw CustomSkillMutationError.invalidCategorizationFile(
+                path: categorizationFileURL.path,
+                underlyingMessage: error.localizedDescription
+            )
+        }
+
+        var skills = definition.skills
+        if let existingIndex = skills.firstIndex(where: { $0.folder == skill.folderName }) {
+            let existingEntry = skills[existingIndex]
+            skills[existingIndex] = SkillCategorizationEntry(
+                folder: existingEntry.folder,
+                name: trimmedDisplayName,
+                scope: existingEntry.scope,
+                platforms: existingEntry.platforms,
+                tags: existingEntry.tags
+            )
+        } else {
+            skills.append(
+                SkillCategorizationEntry(
+                    folder: skill.folderName,
+                    name: trimmedDisplayName,
+                    scope: Self.uncategorizedScopeID,
+                    platforms: skill.platforms.isEmpty ? nil : skill.platforms,
+                    tags: skill.tags.isEmpty ? nil : skill.tags
+                )
+            )
+        }
+
+        let updatedDefinition = SkillCatalogDefinition(
+            version: definition.version,
+            generatedAt: definition.generatedAt,
+            description: definition.description,
+            scopes: definition.scopes,
+            skills: skills
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        do {
+            let updatedData = try encoder.encode(updatedDefinition)
+            try updatedData.write(to: categorizationFileURL, options: .atomic)
+        } catch {
+            throw CustomSkillMutationError.categorizationWriteFailed(
+                path: categorizationFileURL.path,
+                underlyingMessage: error.localizedDescription
+            )
+        }
+    }
+
     private func loadSkills(categorizationState: SkillCategorizationState) -> [CustomSkillRecord] {
         let categorizationByFolder: [String: SkillCategorizationEntry]
         let scopesByID: [String: SkillCatalogScope]
@@ -225,8 +306,13 @@ final class CustomSkillsCatalogService {
             let folderName = folderURL.lastPathComponent
             let categorizationEntry = categorizationByFolder[folderName]
             let scope = categorizationEntry.flatMap { scopesByID[$0.scope] }
+            let originalName = metadata.name ?? folderURL.lastPathComponent
+            let displayName = categorizationEntry?.name?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .nonEmpty ?? originalName
             return CustomSkillRecord(
-                name: metadata.name ?? folderURL.lastPathComponent,
+                name: displayName,
+                originalName: originalName,
                 description: description?.isEmpty == false ? description! : "Custom Local",
                 folderName: folderName,
                 folderURL: folderURL,
@@ -291,6 +377,10 @@ enum CustomSkillMutationError: LocalizedError, Equatable {
     case destinationAlreadyExists(folderName: String, destinationPath: String)
     case moveFailed(folderName: String, destinationPath: String, underlyingMessage: String)
     case trashFailed(folderName: String, underlyingMessage: String)
+    case invalidDisplayName(reason: String)
+    case missingCategorizationFile(path: String)
+    case invalidCategorizationFile(path: String, underlyingMessage: String)
+    case categorizationWriteFailed(path: String, underlyingMessage: String)
 
     var errorDescription: String? {
         switch self {
@@ -302,7 +392,21 @@ enum CustomSkillMutationError: LocalizedError, Equatable {
             return "Could not move `\(folderName)` to `\(destinationPath)`. \(underlyingMessage)"
         case .trashFailed(let folderName, let underlyingMessage):
             return "Could not move `\(folderName)` to the Trash. \(underlyingMessage)"
+        case .invalidDisplayName(let reason):
+            return reason
+        case .missingCategorizationFile(let path):
+            return "Rename labels require `skills.json`. Create it first at `\(path)`."
+        case .invalidCategorizationFile(let path, let underlyingMessage):
+            return "Rename labels require a valid `skills.json`. Repair `\(path)` first. \(underlyingMessage)"
+        case .categorizationWriteFailed(let path, let underlyingMessage):
+            return "Could not save the renamed label to `\(path)`. \(underlyingMessage)"
         }
+    }
+}
+
+private extension String {
+    var nonEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 

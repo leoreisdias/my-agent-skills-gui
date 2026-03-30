@@ -7,7 +7,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         let title: String
     }
 
-    private enum AutoCategorizeRunState {
+    private enum SkillCategorizationRunState {
         case idle
         case running
         case succeeded
@@ -17,9 +17,10 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     private let catalogService: CustomSkillsCatalogService
     private let codexCategorizationService: CodexCategorizationService
     private let searchField = NSSearchField()
+    private let recategorizeButton = NSButton()
     private let bannerContainer = NSView()
     private let categoryFiltersContainer = NSView()
-    private let categoryFiltersStack = NSStackView()
+    private let categoryFiltersView = WrappingButtonListView()
     private let rowsScrollView = NSScrollView()
     private let rowsStack = NSStackView()
     private let autoCategorizeOutput = makeCommandOutputView()
@@ -35,7 +36,8 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     private var categorizationHelpWindowController: CategorizationHelpWindowController?
     private var transientStatusMessage: String?
     private var committedQuery = ""
-    private var autoCategorizeRunState: AutoCategorizeRunState = .idle
+    private var autoCategorizeRunState: SkillCategorizationRunState = .idle
+    private var activeCategorizationRunMode: SkillCategorizationRunMode = .appendMissing
     private var isShowingAutoCategorizeConfirmation = false
     private var autoCategorizeStreamedOutput = false
 
@@ -69,54 +71,36 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         searchField.placeholderString = "Search local skills by name or description"
         searchField.delegate = self
         autoCategorizeInstructionField.placeholderString = "Optional: e.g. Keep Stitch skills together, but leave shadcn-ui inside Frontend."
+        recategorizeButton.title = "Re-categorize"
+        recategorizeButton.bezelStyle = .rounded
+        recategorizeButton.controlSize = .small
+        recategorizeButton.target = self
+        recategorizeButton.action = #selector(confirmAutoCategorize)
+        recategorizeButton.contentTintColor = NSColor.systemTeal
+        recategorizeButton.isHidden = true
 
         let searchButton = makeActionButton("Search", target: self, action: #selector(runSearch))
         let refreshButton = makeActionButton("Refresh", target: self, action: #selector(refresh))
 
-        let controls = NSStackView(views: [searchField, searchButton, refreshButton])
+        let controls = NSStackView(views: [searchField, searchButton, refreshButton, recategorizeButton])
         controls.orientation = .horizontal
         controls.spacing = 8
         controls.alignment = .centerY
 
         bannerContainer.translatesAutoresizingMaskIntoConstraints = false
         categoryFiltersContainer.translatesAutoresizingMaskIntoConstraints = false
+        categoryFiltersView.translatesAutoresizingMaskIntoConstraints = false
         autoCategorizeOverlay.translatesAutoresizingMaskIntoConstraints = false
         autoCategorizeOverlay.isHidden = true
         autoCategorizeOverlay.wantsLayer = true
         autoCategorizeOverlay.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.06).cgColor
 
-        let categoryFiltersScrollView = NSScrollView()
-        categoryFiltersScrollView.borderType = .noBorder
-        categoryFiltersScrollView.hasHorizontalScroller = false
-        categoryFiltersScrollView.hasVerticalScroller = false
-        categoryFiltersScrollView.horizontalScrollElasticity = .allowed
-        categoryFiltersScrollView.scrollerStyle = .overlay
-        categoryFiltersScrollView.drawsBackground = false
-        categoryFiltersScrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        let categoryFiltersContentView = FlippedContentView()
-        categoryFiltersContentView.translatesAutoresizingMaskIntoConstraints = false
-        categoryFiltersScrollView.documentView = categoryFiltersContentView
-
-        categoryFiltersStack.orientation = .horizontal
-        categoryFiltersStack.spacing = 8
-        categoryFiltersStack.alignment = .centerY
-        categoryFiltersStack.translatesAutoresizingMaskIntoConstraints = false
-        categoryFiltersContentView.addSubview(categoryFiltersStack)
-
-        categoryFiltersContainer.addSubview(categoryFiltersScrollView)
+        categoryFiltersContainer.addSubview(categoryFiltersView)
         NSLayoutConstraint.activate([
-            categoryFiltersScrollView.leadingAnchor.constraint(equalTo: categoryFiltersContainer.leadingAnchor),
-            categoryFiltersScrollView.trailingAnchor.constraint(equalTo: categoryFiltersContainer.trailingAnchor),
-            categoryFiltersScrollView.topAnchor.constraint(equalTo: categoryFiltersContainer.topAnchor),
-            categoryFiltersScrollView.bottomAnchor.constraint(equalTo: categoryFiltersContainer.bottomAnchor),
-            categoryFiltersScrollView.heightAnchor.constraint(equalToConstant: 36),
-
-            categoryFiltersStack.leadingAnchor.constraint(equalTo: categoryFiltersContentView.leadingAnchor, constant: 4),
-            categoryFiltersStack.topAnchor.constraint(equalTo: categoryFiltersContentView.topAnchor),
-            categoryFiltersStack.bottomAnchor.constraint(equalTo: categoryFiltersContentView.bottomAnchor),
-            categoryFiltersStack.trailingAnchor.constraint(equalTo: categoryFiltersContentView.trailingAnchor, constant: -4),
-            categoryFiltersContentView.heightAnchor.constraint(equalTo: categoryFiltersScrollView.contentView.heightAnchor)
+            categoryFiltersView.leadingAnchor.constraint(equalTo: categoryFiltersContainer.leadingAnchor),
+            categoryFiltersView.trailingAnchor.constraint(equalTo: categoryFiltersContainer.trailingAnchor),
+            categoryFiltersView.topAnchor.constraint(equalTo: categoryFiltersContainer.topAnchor),
+            categoryFiltersView.bottomAnchor.constraint(equalTo: categoryFiltersContainer.bottomAnchor)
         ])
 
         let rowsColumn = makeScrollableColumn(minHeight: 420, scrollView: rowsScrollView)
@@ -135,7 +119,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
         statusLabel.alignment = .right
 
-        autoCategorizeOutput.textView.string = "Run Auto Categorize to see Codex output here."
+        autoCategorizeOutput.textView.string = SkillCategorizationRunMode.appendMissing.outputPlaceholderMessage
 
         let stack = NSStackView(views: [descriptionLabel, bannerContainer, controls, categoryFiltersContainer, statusLabel, scrollView, autoCategorizeOutputSection])
         stack.orientation = .vertical
@@ -206,13 +190,16 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         }
         catalogSnapshot = catalogService.loadSnapshot()
         allSkills = catalogSnapshot.skills
+        if autoCategorizeRunState != .running, !autoCategorizeStreamedOutput {
+            autoCategorizeOutput.textView.string = currentCategorizationRunMode().outputPlaceholderMessage
+        }
         ensureValidSelectedCategory()
         applyFilter()
     }
 
     @objc private func copySkillName(_ sender: NSButton) {
         guard sender.tag >= 0, sender.tag < filteredSkills.count else { return }
-        copyToPasteboard(filteredSkills[sender.tag].name)
+        copyToPasteboard(filteredSkills[sender.tag].originalName)
     }
 
     @objc private func openSkillFile(_ sender: NSButton) {
@@ -266,9 +253,26 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         }
     }
 
+    @objc private func renameSkill(_ sender: NSButton) {
+        guard sender.tag >= 0, sender.tag < filteredSkills.count else { return }
+        let skill = filteredSkills[sender.tag]
+
+        guard let newDisplayName = promptForSkillDisplayName(skill: skill) else { return }
+
+        do {
+            try catalogService.renameSkill(skill, displayName: newDisplayName)
+            transientStatusMessage = "Saved `\(skill.originalName)` as `\(newDisplayName)` for display in the app."
+            reloadData(preserveTransientStatus: true)
+        } catch {
+            transientStatusMessage = error.localizedDescription
+            applyFilter()
+        }
+    }
+
     private func applyFilter() {
         let categoryFilteredSkills = skillsMatchingSelectedCategory(allSkills)
         filteredSkills = catalogService.filter(skills: categoryFilteredSkills, query: committedQuery)
+        updateRecategorizeButton()
         renderBanner()
         renderCategoryFilters()
         updateStatusLabel()
@@ -312,6 +316,11 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     private func renderBanner() {
         bannerContainer.subviews.forEach { $0.removeFromSuperview() }
 
+        guard autoCategorizeRunState != .running else {
+            bannerContainer.isHidden = true
+            return
+        }
+
         let bannerView: NSView?
         switch catalogSnapshot.categorizationState {
         case .missing:
@@ -322,7 +331,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
                 target: self,
                 action: #selector(confirmAutoCategorize),
                 tone: .highlight,
-                buttonEnabled: autoCategorizeRunState != .running,
+                buttonEnabled: true,
                 secondaryButtonTitle: "Categorize",
                 secondaryTarget: self,
                 secondaryAction: #selector(showCategorizationHelp)
@@ -335,27 +344,21 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
                 target: self,
                 action: #selector(confirmAutoCategorize),
                 tone: .caution,
-                buttonEnabled: autoCategorizeRunState != .running,
+                buttonEnabled: true,
                 secondaryButtonTitle: "Categorize",
                 secondaryTarget: self,
                 secondaryAction: #selector(showCategorizationHelp)
             )
         case .loaded:
             if hasUncategorizedSkills(in: allSkills) {
-                let title = autoCategorizeRunState == .running
-                    ? "Auto categorization is running"
-                    : "Some skills still need categories"
-                let message = autoCategorizeRunState == .running
-                    ? "Codex is updating `skills.json` now. Open `Auto Categorize Output` below to follow the run inside the app."
-                    : "Use Auto Categorize to ask Codex to update `skills.json` and append the skills that are still uncategorized."
                 bannerView = ActionBannerView(
-                    title: title,
-                    message: message,
+                    title: "Some skills still need categories",
+                    message: "Use Auto Categorize to ask Codex to update `skills.json` and append the skills that are still uncategorized.",
                     buttonTitle: "Auto Categorize",
                     target: self,
                     action: #selector(confirmAutoCategorize),
                     tone: .highlight,
-                    buttonEnabled: autoCategorizeRunState != .running,
+                    buttonEnabled: true,
                     secondaryButtonTitle: "Categorize",
                     secondaryTarget: self,
                     secondaryAction: #selector(showCategorizationHelp)
@@ -404,9 +407,10 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
     @objc private func confirmAutoCategorize() {
         guard autoCategorizeRunState != .running else { return }
+        activeCategorizationRunMode = currentCategorizationRunMode()
         isShowingAutoCategorizeConfirmation = true
-        transientStatusMessage = "Review the Auto Categorize confirmation. The Codex run output will appear below inside the app."
-        autoCategorizeOutputSection.setExpanded(true)
+        configureAutoCategorizeOverlay()
+        transientStatusMessage = activeCategorizationRunMode.confirmationStatusMessage
         autoCategorizeOverlay.isHidden = false
         view.window?.makeFirstResponder(autoCategorizeInstructionField)
         updateStatusLabel()
@@ -424,19 +428,16 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
     }
 
     private func renderCategoryFilters() {
-        categoryFiltersStack.arrangedSubviews.forEach {
-            categoryFiltersStack.removeArrangedSubview($0)
-            $0.removeFromSuperview()
-        }
-
         let options = categoryFilterOptions()
         currentCategoryFilterOptions = options
         guard options.count > 1 else {
             categoryFiltersContainer.isHidden = true
+            categoryFiltersView.setButtons([])
             return
         }
 
         categoryFiltersContainer.isHidden = false
+        var buttons: [NSButton] = []
         for (index, option) in options.enumerated() {
             let button = makeFilterChipButton(
                 option.title,
@@ -445,8 +446,23 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
                 isSelected: selectedCategoryID == option.id
             )
             button.tag = index
-            categoryFiltersStack.addArrangedSubview(button)
+            buttons.append(button)
         }
+        categoryFiltersView.setButtons(buttons)
+    }
+
+    private func updateRecategorizeButton() {
+        let shouldShowButton: Bool
+        switch catalogSnapshot.categorizationState {
+        case .loaded:
+            shouldShowButton = !hasUncategorizedSkills(in: allSkills) && autoCategorizeRunState != .running
+        case .missing, .invalid:
+            shouldShowButton = false
+        }
+
+        recategorizeButton.isHidden = !shouldShowButton
+        recategorizeButton.isEnabled = autoCategorizeRunState != .running
+        recategorizeButton.title = currentCategorizationRunMode().actionButtonTitle
     }
 
     private func renderRows() {
@@ -476,20 +492,23 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
     private func runAutoCategorize() {
         guard autoCategorizeRunState != .running else { return }
+        let mode = activeCategorizationRunMode
 
         isShowingAutoCategorizeConfirmation = false
         autoCategorizeOverlay.isHidden = true
         autoCategorizeRunState = .running
-        transientStatusMessage = "Running Codex auto-categorization. Open `Auto Categorize Output` below to follow the process."
+        transientStatusMessage = mode.runningStatusMessage
         autoCategorizeStreamedOutput = false
-        autoCategorizeOutput.textView.string = "Starting Codex auto-categorization...\n\nLive Codex output will appear here.\n"
+        autoCategorizeOutput.textView.string = mode.outputStartMessage
         autoCategorizeOutputSection.setExpanded(true)
+        updateRecategorizeButton()
         renderBanner()
         updateStatusLabel()
 
         let snapshot = catalogSnapshot
         codexCategorizationService.run(
             snapshot: snapshot,
+            mode: mode,
             additionalInstruction: autoCategorizeInstructionField.stringValue,
             onOutput: { [weak self] chunk in
                 guard let self else { return }
@@ -506,7 +525,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
             guard result.succeeded else {
                 self.autoCategorizeRunState = .failed
-                self.transientStatusMessage = "Auto Categorize failed. Review `Auto Categorize Output` below for details."
+                self.transientStatusMessage = mode.failureStatusMessage
                 self.renderBanner()
                 self.updateStatusLabel()
                 return
@@ -519,10 +538,10 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
             if case .loaded = self.catalogSnapshot.categorizationState,
                !self.hasUncategorizedSkills(in: self.allSkills) {
                 self.autoCategorizeRunState = .succeeded
-                self.transientStatusMessage = "Auto Categorize updated `skills.json` successfully."
+                self.transientStatusMessage = mode.successStatusMessage
             } else {
                 self.autoCategorizeRunState = .failed
-                self.transientStatusMessage = "Codex finished, but `skills.json` still needs review."
+                self.transientStatusMessage = mode.reviewStatusMessage
             }
 
             self.applyFilter()
@@ -540,12 +559,14 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         container.layer?.borderColor = NSColor.systemTeal.withAlphaComponent(0.4).cgColor
         container.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        let titleLabel = NSTextField(labelWithString: "Auto Categorize with Codex")
+        let mode = activeCategorizationRunMode
+
+        let titleLabel = NSTextField(labelWithString: mode.confirmationTitle)
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.textColor = NSColor.systemTeal.blended(withFraction: 0.2, of: .labelColor) ?? .labelColor
         titleLabel.alignment = .right
 
-        let messageLabel = makeBodyLabel("AI Skills Companion will ask Codex to create or update `~/.agents/skills/skills.json`, preserve existing mappings, append only missing skills, and leave the run details in the `Auto Categorize Output` section below.")
+        let messageLabel = makeBodyLabel(mode.confirmationMessage)
         messageLabel.textColor = .secondaryLabelColor
         messageLabel.alignment = .right
 
@@ -560,7 +581,7 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
         let exampleLabel = makeSecondaryLabel("Example: Put all of my ShadCN skills in a specific group, but keep Stitch and Remotion together under Stitch.")
         exampleLabel.alignment = .right
 
-        let runButton = makeActionButton("Run Auto Categorize", target: self, action: #selector(runAutoCategorizeFromBanner))
+        let runButton = makeActionButton(mode.runButtonTitle, target: self, action: #selector(runAutoCategorizeFromBanner))
         runButton.contentTintColor = .systemTeal
         runButton.isEnabled = autoCategorizeRunState != .running
 
@@ -596,6 +617,13 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
             container.widthAnchor.constraint(equalTo: autoCategorizeOverlay.widthAnchor, multiplier: 0.84),
             container.widthAnchor.constraint(lessThanOrEqualToConstant: 860)
         ])
+    }
+
+    private func currentCategorizationRunMode() -> SkillCategorizationRunMode {
+        SkillCategorizationRunMode.recommended(
+            skills: allSkills,
+            categorizationState: catalogSnapshot.categorizationState
+        )
     }
 
     private func appendAutoCategorizeOutput(_ chunk: String) {
@@ -655,8 +683,10 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
     private func cardView(for skill: CustomSkillRecord) -> NSView {
         let index = filteredSkills.firstIndex(of: skill) ?? 0
-        let copyButton = makeActionButton("Copy Name", target: self, action: #selector(copySkillName(_:)))
+        let copyButton = makeActionButton("Copy Original", target: self, action: #selector(copySkillName(_:)))
         copyButton.tag = index
+        let renameButton = makeActionButton("Rename Label", target: self, action: #selector(renameSkill(_:)))
+        renameButton.tag = index
         let fileButton = makeActionButton("Open SKILL.md", target: self, action: #selector(openSkillFile(_:)))
         fileButton.tag = index
         let folderButton = makeActionButton("Open Folder", target: self, action: #selector(openSkillFolder(_:)))
@@ -679,13 +709,21 @@ final class CustomTabViewController: NSViewController, NSSearchFieldDelegate {
 
         return SkillRowBox(
             title: skill.name,
-            subtitle: "",
+            subtitle: skill.hasAlias ? "Original: \(skill.originalName)" : "",
             body: skill.description,
-            actionButtons: [copyButton, fileButton, folderButton],
+            actionButtons: [copyButton, renameButton, fileButton, folderButton],
             headerAccessoryViews: [enabledSwitch, trashButton],
             statusText: skill.isDisabled ? "Disabled" : nil,
             isDimmed: skill.isDisabled
         )
+    }
+
+    private func promptForSkillDisplayName(skill: CustomSkillRecord) -> String? {
+        let controller = RenameSkillWindowController(
+            initialValue: skill.name,
+            originalName: skill.originalName
+        )
+        return controller.runModal()
     }
 
     private func skillsMatchingSelectedCategory(_ skills: [CustomSkillRecord]) -> [CustomSkillRecord] {
@@ -831,5 +869,156 @@ private final class CategorizationHelpWindowController: NSWindowController {
 
     @objc private func closeWindow() {
         close()
+    }
+}
+
+@MainActor
+private final class RenameSkillWindowController: NSWindowController, NSTextFieldDelegate {
+    private let textField: NSTextField
+    private let validationLabel: NSTextField
+    private let cancelButton: NSButton
+    private let saveButton: NSButton
+    private var result: String?
+
+    init(initialValue: String, originalName: String) {
+        self.textField = NSTextField(string: initialValue)
+        self.validationLabel = makeSecondaryLabel("")
+        self.cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+        self.saveButton = NSButton(title: "Save Label", target: nil, action: nil)
+
+        let contentViewController = NSViewController()
+        let contentView = NSView()
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        contentViewController.view = contentView
+
+        let titleLabel = NSTextField(labelWithString: "Rename skill label")
+        titleLabel.font = .systemFont(ofSize: 20, weight: .bold)
+
+        let descriptionLabel = makeBodyLabel(
+            "This changes only how the skill appears in AI Skills Companion. The original skill name stays the same."
+        )
+        descriptionLabel.textColor = .secondaryLabelColor
+
+        let originalNameLabel = makeSecondaryLabel("Original skill name: \(originalName)")
+        originalNameLabel.lineBreakMode = .byTruncatingMiddle
+
+        textField.placeholderString = "Display name"
+        textField.controlSize = .regular
+        textField.font = .systemFont(ofSize: 13)
+        textField.translatesAutoresizingMaskIntoConstraints = false
+
+        validationLabel.textColor = .systemRed
+        validationLabel.isHidden = true
+        validationLabel.lineBreakMode = .byWordWrapping
+        validationLabel.maximumNumberOfLines = 2
+
+        cancelButton.controlSize = .regular
+
+        saveButton.controlSize = .regular
+        saveButton.keyEquivalent = "\r"
+
+        let buttonSpacer = NSView()
+        buttonSpacer.translatesAutoresizingMaskIntoConstraints = false
+        buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        buttonSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let buttonRow = NSStackView(views: [buttonSpacer, cancelButton, saveButton])
+        buttonRow.orientation = .horizontal
+        buttonRow.spacing = 10
+        buttonRow.alignment = .centerY
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [titleLabel, descriptionLabel, originalNameLabel, textField, validationLabel, buttonRow])
+        stack.orientation = .vertical
+        stack.spacing = 12
+        stack.alignment = .width
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        contentView.addSubview(stack)
+        NSLayoutConstraint.activate([
+            contentView.widthAnchor.constraint(equalToConstant: 420),
+            textField.heightAnchor.constraint(equalToConstant: 28),
+            stack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+            stack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20)
+        ])
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 250),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Rename skill label"
+        window.contentViewController = contentViewController
+        window.isReleasedWhenClosed = false
+        window.center()
+
+        super.init(window: window)
+
+        textField.delegate = self
+        cancelButton.target = self
+        cancelButton.action = #selector(cancel)
+        saveButton.target = self
+        saveButton.action = #selector(save)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func runModal() -> String? {
+        guard let window else { return nil }
+        showWindow(nil)
+        window.center()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.initialFirstResponder = textField
+        window.makeFirstResponder(textField)
+        _ = NSApp.runModal(for: window)
+        window.orderOut(nil)
+        return result
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            save()
+            return true
+        }
+        return false
+    }
+
+    @objc private func save() {
+        let trimmedValue = textField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedValue.isEmpty {
+            showValidation("Enter a display name before saving.")
+            return
+        }
+
+        if trimmedValue.rangeOfCharacter(from: .newlines) != nil {
+            showValidation("Display names must stay on a single line.")
+            return
+        }
+
+        result = trimmedValue
+        closeModal()
+    }
+
+    @objc private func cancel() {
+        result = nil
+        closeModal()
+    }
+
+    private func showValidation(_ message: String) {
+        validationLabel.stringValue = message
+        validationLabel.isHidden = false
+    }
+
+    private func closeModal() {
+        guard let window else { return }
+        NSApp.stopModal()
+        window.close()
     }
 }
